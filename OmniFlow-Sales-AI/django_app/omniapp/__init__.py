@@ -1,0 +1,1 @@
+"""OmniApp Django application."""

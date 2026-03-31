@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniFlow Sales AI — MLOps Platform</title>
+  <meta name="description" content="OmniFlow Sales AI: Automated ML training, prediction, and drift detection for sales forecasting." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0e1a;
+      --bg2: #111827;
+      --card: #161d2e;
+      --border: #1e2d45;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --glow: 0 0 30px rgba(99,102,241,0.15);
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; }
+
+    /* NAV */
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 2.5rem;
+      background: rgba(17,24,39,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .nav-logo { font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .nav-links { display: flex; gap: 0.5rem; }
+    .nav-links a {
+      padding: 0.45rem 1rem; border-radius: 8px; text-decoration: none; font-size: 0.9rem;
+      color: var(--muted); transition: all 0.2s;
+    }
+    .nav-links a:hover, .nav-links a.active { background: var(--border); color: var(--text); }
+
+    /* HERO */
+    .hero {
+      text-align: center; padding: 5rem 2rem 3rem;
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99,102,241,0.18) 0%, transparent 70%);
+    }
+    .hero-badge {
+      display: inline-block; padding: 0.3rem 1rem;
+      background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.4);
+      border-radius: 100px; font-size: 0.78rem; color: var(--accent2); margin-bottom: 1.5rem;
+      animation: fadeDown 0.5s ease both;
+    }
+    .hero h1 {
+      font-size: clamp(2.2rem, 5vw, 3.8rem); font-weight: 800; line-height: 1.15;
+      background: linear-gradient(135deg, #e2e8f0 30%, #818cf8);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      animation: fadeDown 0.6s ease 0.1s both;
+    }
+    .hero p {
+      margin-top: 1rem; font-size: 1.1rem; color: var(--muted); max-width: 560px; margin-inline: auto;
+      animation: fadeDown 0.6s ease 0.2s both;
+    }
+    .hero-actions {
+      display: flex; justify-content: center; gap: 1rem; margin-top: 2rem; flex-wrap: wrap;
+      animation: fadeDown 0.6s ease 0.3s both;
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.75rem 1.75rem; border-radius: 10px; font-size: 0.95rem; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer; transition: all 0.25s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 0 20px rgba(99,102,241,0.4); }
+    .btn-primary:hover { background: #4f46e5; transform: translateY(-1px); box-shadow: 0 0 30px rgba(99,102,241,0.5); }
+    .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-outline:hover { background: var(--border); transform: translateY(-1px); }
+
+    /* STATUS STRIP */
+    .status-strip {
+      display: flex; justify-content: center; gap: 2rem; padding: 1rem 2rem;
+      background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .status-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot-red { background: var(--red); }
+    .dot-yellow { background: var(--yellow); }
+
+    /* CARDS */
+    .section { max-width: 1100px; margin: 3rem auto; padding: 0 2rem; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1.5rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1.75rem; transition: all 0.3s; position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .card:hover { border-color: rgba(99,102,241,0.4); transform: translateY(-3px); box-shadow: var(--glow); }
+    .card:hover::before { opacity: 1; }
+    .card-icon { font-size: 2rem; margin-bottom: 1rem; }
+    .card h2 { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .card p { font-size: 0.9rem; color: var(--muted); line-height: 1.6; margin-bottom: 1.5rem; }
+    .card a { text-decoration: none; }
+
+    /* METRICS */
+    .metrics-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+    .metric-pill {
+      background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 8px; padding: 0.5rem 1rem; font-size: 0.85rem;
+    }
+    .metric-pill span { color: var(--accent2); font-weight: 700; }
+
+    /* PIPELINE */
+    .pipeline { display: flex; align-items: center; gap: 0; flex-wrap: wrap; margin: 2rem 0; }
+    .pipe-step {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 1rem 1.25rem; font-size: 0.85rem; font-weight: 600; position: relative;
+      display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
+      min-width: 130px; text-align: center;
+    }
+    .pipe-step .pipe-icon { font-size: 1.5rem; }
+    .pipe-arrow { color: var(--muted); font-size: 1.25rem; padding: 0 0.25rem; }
+
+    /* FOOTER */
+    footer { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--border); margin-top: 4rem; }
+
+    @keyframes fadeDown { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-logo">⚡ OmniFlow</span>
+  <div class="nav-links">
+    <a href="{% url 'index' %}" class="active">Dashboard</a>
+    <a href="{% url 'upload' %}">Train</a>
+    <a href="{% url 'predict' %}">Predict</a>
+    <a href="{% url 'drift_result' %}">Drift & Retrain</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge">⚙️ MLOps Automation Platform</div>
+  <h1>OmniFlow Sales AI</h1>
+  <p>Automated machine learning for sales forecasting — with real-time drift detection and self-healing model retraining.</p>
+  <div class="hero-actions">
+    <a href="{% url 'upload' %}" class="btn btn-primary">🚀 Train a Model</a>
+    <a href="{% url 'predict' %}" class="btn btn-outline">🔮 Run Prediction</a>
+  </div>
+</section>
+
+<!-- Status Strip -->
+<div class="status-strip">
+  <div class="status-item">
+    <div class="dot {% if api_status.api == 'healthy' %}dot-green{% else %}dot-red{% endif %}"></div>
+    FastAPI Backend: <strong>{{ api_status.api|default:"unreachable" }}</strong>
+  </div>
+  <div class="status-item">
+    <div class="dot {% if api_status.model_ready %}dot-green{% else %}dot-yellow{% endif %}"></div>
+    Champion Model: <strong>{% if api_status.model_ready %}Ready{% else %}Not Trained{% endif %}</strong>
+  </div>
+  {% if api_status.champion_metrics %}
+  <div class="status-item">📊
+    R² = <strong>{{ api_status.champion_metrics.r2 }}</strong> &nbsp;|&nbsp;
+    MAE = <strong>{{ api_status.champion_metrics.mae }}</strong> &nbsp;|&nbsp;
+    RMSE = <strong>{{ api_status.champion_metrics.rmse }}</strong>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Feature Cards -->
+<div class="section">
+  <div class="section-title">Core Capabilities</div>
+  <div class="cards">
+    <div class="card">
+      <div class="card-icon">📤</div>
+      <h2>Train Model</h2>
+      <p>Upload any CSV dataset, select your target column, and train a RandomForest model. Metrics are logged to MLflow automatically.</p>
+      <a href="{% url 'upload' %}" class="btn btn-primary" style="font-size:0.85rem;padding:0.5rem 1.2rem;">Start Training →</a>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔮</div>
+      <h2>Predict</h2>
+      <p>Submit feature values as JSON and get instant predictions from the champion model. Uses saved encoders for consistency.</p>
+      <a href="{% url 'predict' %}" class="btn btn-primary" style="font-size:0.85rem;padding:0.5rem 1.2rem;">Make Prediction →</a>
+    </div>
+    <div class="card">
+      <div class="card-icon">📡</div>
+      <h2>Drift Detection</h2>
+      <p>Upload new production data. The system compares feature distributions against the training baseline and flags statistical drift.</p>
+      <a href="{% url 'drift_result' %}" class="btn btn-primary" style="font-size:0.85rem;padding:0.5rem 1.2rem;">Check Drift →</a>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔁</div>
+      <h2>Self-Healing Retraining</h2>
+      <p>When drift is detected, a challenger model trains automatically. It is promoted only if it outperforms the current champion.</p>
+      <a href="{% url 'drift_result' %}" class="btn btn-outline" style="font-size:0.85rem;padding:0.5rem 1.2rem;">View Retrain →</a>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline Diagram -->
+<div class="section">
+  <div class="section-title">End-to-End Pipeline</div>
+  <div class="pipeline">
+    <div class="pipe-step"><div class="pipe-icon">📁</div>Upload CSV</div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="pipe-icon">⚙️</div>Preprocess</div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="pipe-icon">🧠</div>Train Model</div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="pipe-icon">💾</div>Save + Stats</div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="pipe-icon">📡</div>Drift Check</div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="pipe-icon">🔁</div>Retrain</div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="pipe-icon">🏆</div>Champion</div>
+  </div>
+</div>
+
+<footer>OmniFlow Sales AI &copy; 2024 — Built with FastAPI, scikit-learn, Django &amp; MLflow</footer>
+</body>
+</html>

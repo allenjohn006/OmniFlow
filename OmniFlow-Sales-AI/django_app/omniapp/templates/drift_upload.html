@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drift Check — OmniFlow Sales AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#0a0e1a;--bg2:#111827;--card:#161d2e;--border:#1e2d45;--accent:#6366f1;--accent2:#818cf8;--green:#10b981;--yellow:#f59e0b;--red:#ef4444;--text:#e2e8f0;--muted:#64748b}
+    body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh}
+    nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 2.5rem;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+    .nav-logo{font-size:1.4rem;font-weight:800;background:linear-gradient(135deg,#6366f1,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-decoration:none}
+    .nav-links{display:flex;gap:0.5rem}
+    .nav-links a{padding:0.45rem 1rem;border-radius:8px;text-decoration:none;font-size:0.9rem;color:var(--muted);transition:all 0.2s}
+    .nav-links a.active,.nav-links a:hover{background:var(--border);color:var(--text)}
+    .page-wrap{max-width:720px;margin:3rem auto;padding:0 1.5rem;animation:fadeIn 0.4s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+    .badge{display:inline-block;padding:0.3rem 0.9rem;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.35);border-radius:100px;font-size:0.78rem;color:var(--accent2);margin-bottom:0.75rem}
+    h1{font-size:2rem;font-weight:800;margin-bottom:0.4rem}
+    .sub{color:var(--muted);font-size:0.95rem;margin-bottom:2rem}
+    .error-box{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:10px;padding:1rem 1.25rem;color:#fca5a5;font-size:0.9rem;margin-bottom:1.5rem}
+    .warn-box{background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:12px;padding:1.25rem;margin-bottom:1.5rem;font-size:0.85rem;color:#fcd34d}
+    form{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:2rem}
+    .form-group{margin-bottom:1.5rem}
+    label{display:block;font-size:0.875rem;font-weight:600;margin-bottom:0.5rem}
+    .hint{font-weight:400;color:var(--muted);margin-left:0.5rem;font-size:0.8rem}
+    input[type="text"]{width:100%;padding:0.75rem 1rem;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:0.95rem;font-family:inherit;transition:border-color 0.2s;outline:none}
+    input[type="text"]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,0.15)}
+    .file-drop{border:2px dashed var(--border);border-radius:12px;padding:2.5rem;text-align:center;cursor:pointer;transition:all 0.25s;position:relative}
+    .file-drop:hover{border-color:var(--accent);background:rgba(99,102,241,0.05)}
+    .file-drop input[type="file"]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+    .drop-icon{font-size:2.5rem;margin-bottom:0.75rem}
+    .drop-text{font-size:0.95rem;color:var(--muted)}
+    .drop-text strong{color:var(--accent2)}
+    #fname{margin-top:0.75rem;font-size:0.85rem;color:var(--green);min-height:1.2em}
+    .submit-btn{width:100%;padding:1rem;background:linear-gradient(135deg,#7c3aed,#6366f1);border:none;border-radius:12px;color:#fff;font-size:1rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.25s;display:flex;align-items:center;justify-content:center;gap:0.5rem}
+    .submit-btn:hover{opacity:0.9;box-shadow:0 0 25px rgba(99,102,241,0.4);transform:translateY(-1px)}
+    .submit-btn:disabled{opacity:0.5;cursor:not-allowed}
+    .spinner{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{% url 'index' %}" class="nav-logo">⚡ OmniFlow</a>
+  <div class="nav-links">
+    <a href="{% url 'index' %}">Dashboard</a>
+    <a href="{% url 'upload' %}">Train</a>
+    <a href="{% url 'predict' %}">Predict</a>
+    <a href="{% url 'drift_result' %}" class="active">Drift & Retrain</a>
+  </div>
+</nav>
+
+<div class="page-wrap">
+  <div class="badge">📡 Drift Detection & Self-Healing</div>
+  <h1>Drift Check & Retrain</h1>
+  <p class="sub">Upload new production data. If drift is detected, a challenger model is trained and compared automatically.</p>
+
+  {% if error %}
+  <div class="error-box">⚠️ {{ error }}</div>
+  {% endif %}
+
+  <div class="warn-box">⚠️ A base model must be trained first before running drift detection. <a href="{% url 'upload' %}" style="color:#fbbf24">Train a model →</a></div>
+
+  <form method="post" enctype="multipart/form-data" id="drift-form">
+    {% csrf_token %}
+    <div class="form-group">
+      <label>New Production Data <span class="hint">(CSV)</span></label>
+      <div class="file-drop">
+        <input type="file" name="file" id="dfile" accept=".csv" required />
+        <div class="drop-icon">📡</div>
+        <div class="drop-text">Drop CSV here or <strong>click to browse</strong></div>
+        <div id="fname"></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="tc">Target Column <span class="hint">(same name used during training)</span></label>
+      <input type="text" name="target_col" id="tc" placeholder="e.g. Units_Sold" required />
+    </div>
+    <button type="submit" class="submit-btn" id="dbtn">
+      <span id="dbtxt">📡 Analyze Drift</span>
+      <div class="spinner" id="dspinner"></div>
+    </button>
+  </form>
+</div>
+<script>
+  document.getElementById('dfile').addEventListener('change',function(){
+    document.getElementById('fname').textContent=this.files[0]?'✅ '+this.files[0].name:'';
+  });
+  document.getElementById('drift-form').addEventListener('submit',function(){
+    var btn=document.getElementById('dbtn');
+    document.getElementById('dbtxt').textContent='Analyzing…';
+    document.getElementById('dspinner').style.display='block';
+    btn.disabled=true;
+  });
+</script>
+</body>
+</html>

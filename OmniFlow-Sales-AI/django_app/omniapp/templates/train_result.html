@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Training Results — OmniFlow Sales AI</title>
+  <meta name="description" content="Model training metrics and performance results." />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0e1a; --bg2: #111827; --card: #161d2e; --border: #1e2d45;
+      --accent: #6366f1; --accent2: #818cf8; --green: #10b981; --yellow: #f59e0b;
+      --text: #e2e8f0; --muted: #64748b;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; }
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 2.5rem; background: rgba(17,24,39,0.85);
+      backdrop-filter: blur(12px); border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .nav-logo { font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; }
+    .nav-links { display: flex; gap: 0.5rem; }
+    .nav-links a { padding: 0.45rem 1rem; border-radius: 8px; text-decoration: none; font-size: 0.9rem; color: var(--muted); transition: all 0.2s; }
+    .nav-links a:hover, .nav-links a.active { background: var(--border); color: var(--text); }
+    .page-wrap { max-width: 820px; margin: 3rem auto; padding: 0 1.5rem; animation: fadeIn 0.4s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+    .success-banner {
+      background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(99,102,241,0.1));
+      border: 1px solid rgba(16,185,129,0.4); border-radius: 16px;
+      padding: 1.75rem 2rem; display: flex; align-items: center; gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .success-banner .icon { font-size: 2.5rem; }
+    .success-banner h1 { font-size: 1.4rem; font-weight: 800; color: #6ee7b7; }
+    .success-banner p { color: var(--muted); font-size: 0.9rem; margin-top: 0.25rem; }
+
+    .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem; }
+    .metric-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 1.5rem; text-align: center; transition: all 0.3s;
+    }
+    .metric-card:hover { border-color: rgba(99,102,241,0.4); transform: translateY(-2px); }
+    .metric-card .m-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 0.5rem; }
+    .metric-card .m-value { font-size: 2rem; font-weight: 800; }
+    .metric-card.r2 .m-value { color: var(--green); }
+    .metric-card.mae .m-value { color: var(--yellow); }
+    .metric-card.rmse .m-value { color: var(--accent2); }
+    .metric-card .m-desc { font-size: 0.78rem; color: var(--muted); margin-top: 0.4rem; }
+
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .info-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem;
+    }
+    .info-card .i-label { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); margin-bottom: 0.35rem; }
+    .info-card .i-value { font-size: 1rem; font-weight: 600; color: var(--text); }
+
+    .actions { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.75rem 1.5rem; border-radius: 10px; font-size: 0.9rem; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer; transition: all 0.25s; font-family: inherit;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #4f46e5; transform: translateY(-1px); }
+    .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-outline:hover { background: var(--border); transform: translateY(-1px); }
+
+    @media(max-width: 640px) { .metrics-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{% url 'index' %}" class="nav-logo">⚡ OmniFlow</a>
+  <div class="nav-links">
+    <a href="{% url 'index' %}">Dashboard</a>
+    <a href="{% url 'upload' %}" class="active">Train</a>
+    <a href="{% url 'predict' %}">Predict</a>
+    <a href="{% url 'drift_result' %}">Drift & Retrain</a>
+  </div>
+</nav>
+
+<div class="page-wrap">
+
+  {% if result and result.metrics %}
+  <div class="success-banner">
+    <div class="icon">✅</div>
+    <div>
+      <h1>Model Trained Successfully!</h1>
+      <p>
+        {% if result.target_column %}Target: <strong>{{ result.target_column }}</strong> &nbsp;|&nbsp; {% endif %}
+        {% if result.dataset_shape %}Rows: <strong>{{ result.dataset_shape.rows }}</strong> &nbsp;|&nbsp; Columns: <strong>{{ result.dataset_shape.columns }}</strong>{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <div class="metrics-grid">
+    <div class="metric-card r2">
+      <div class="m-label">R² Score</div>
+      <div class="m-value">{{ result.metrics.r2 }}</div>
+      <div class="m-desc">Closer to 1.0 is better</div>
+    </div>
+    <div class="metric-card mae">
+      <div class="m-label">MAE</div>
+      <div class="m-value">{{ result.metrics.mae }}</div>
+      <div class="m-desc">Mean Absolute Error</div>
+    </div>
+    <div class="metric-card rmse">
+      <div class="m-label">RMSE</div>
+      <div class="m-value">{{ result.metrics.rmse }}</div>
+      <div class="m-desc">Root Mean Squared Error</div>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="success-banner">
+    <div class="icon">📊</div>
+    <div>
+      <h1>Champion Model Metrics</h1>
+      <p>{% if error %}{{ error }}{% else %}Showing the current champion model performance.{% endif %}</p>
+    </div>
+  </div>
+
+  {% if result and result.metrics and result.metrics.r2 %}
+  <div class="metrics-grid">
+    <div class="metric-card r2"><div class="m-label">R² Score</div><div class="m-value">{{ result.metrics.r2 }}</div><div class="m-desc">Closer to 1.0 is better</div></div>
+    <div class="metric-card mae"><div class="m-label">MAE</div><div class="m-value">{{ result.metrics.mae }}</div><div class="m-desc">Mean Absolute Error</div></div>
+    <div class="metric-card rmse"><div class="m-label">RMSE</div><div class="m-value">{{ result.metrics.rmse }}</div><div class="m-desc">Root Mean Squared Error</div></div>
+  </div>
+  {% else %}
+  <p style="color:var(--muted);margin-bottom:2rem;">No model has been trained yet. <a href="{% url 'upload' %}" style="color:var(--accent2);">Train one now →</a></p>
+  {% endif %}
+  {% endif %}
+
+  <div class="actions">
+    <a href="{% url 'predict' %}" class="btn btn-primary">🔮 Make a Prediction</a>
+    <a href="{% url 'drift_result' %}" class="btn btn-outline">📡 Check for Drift</a>
+    <a href="{% url 'upload' %}" class="btn btn-outline">🔄 Train New Model</a>
+  </div>
+</div>
+</body>
+</html>

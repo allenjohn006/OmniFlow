@@ -1,0 +1,23 @@
+artifact_path: file:C:/Users/allen/Downloads/projects/OmniFlow-Sales-AI/mlruns/1/models/m-293f7f7272e54f248e3a21393a0e502f/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.14.0
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.7.2
+    skops_trusted_types: null
+mlflow_version: 3.10.1
+model_id: m-293f7f7272e54f248e3a21393a0e502f
+model_size_bytes: 2752868
+model_uuid: m-293f7f7272e54f248e3a21393a0e502f
+prompts: null
+run_id: cf9a538c7fb04ba58322616f33f071ae
+utc_time_created: '2026-03-31 06:13:32.638976'
