@@ -1,0 +1,32 @@
+# Large data files
+data/raw/*.csv
+powerbi/*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# ML artifacts
+mlruns/
+*.joblib
+*.pkl
+
+# Django
+*.db
+db.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
