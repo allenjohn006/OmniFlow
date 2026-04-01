@@ -10,4 +10,5 @@ urlpatterns = [
     path("predict/", views.predict, name="predict"),
     path("train/", views.train_result, name="train_result"),
     path("drift/", views.drift_result, name="drift_result"),
+    path("drift/status/<str:job_id>/", views.drift_status, name="drift_status"),
 ]

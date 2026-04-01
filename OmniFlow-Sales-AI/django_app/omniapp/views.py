@@ -132,39 +132,98 @@ def predict(request):
 # ───────────────────────────────────────────────────────────────
 def drift_result(request):
     """Upload new CSV, detect drift, and trigger retraining if needed."""
+    job_id = request.GET.get("job_id", "").strip()
+
+    if job_id:
+        try:
+            resp = requests.get(f"{FASTAPI_URL}/drift/status/{job_id}", timeout=20)
+            if resp.ok:
+                payload = resp.json()
+                if payload.get("status") == "completed" and payload.get("result"):
+                    return render(request, "drift_result.html", {"result": payload["result"]})
+                if payload.get("status") == "failed":
+                    return render(
+                        request,
+                        "drift_upload.html",
+                        {"error": payload.get("error") or payload.get("message") or "Drift check failed."},
+                    )
+                return render(request, "drift_upload.html", {"job_id": job_id, "resume_poll": True})
+        except Exception:
+            pass
+
     if request.method == "POST":
         csv_file = request.FILES.get("file")
         target_col = request.POST.get("target_col", "").strip()
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
         if not csv_file:
+            if is_ajax:
+                return JsonResponse({"detail": "Please select a CSV file."}, status=400)
             return render(request, "drift_upload.html", {"error": "Please select a CSV file."})
         if not target_col:
+            if is_ajax:
+                return JsonResponse({"detail": "Please enter a target column name."}, status=400)
             return render(request, "drift_upload.html", {"error": "Please enter a target column name."})
 
         try:
             response = requests.post(
-                f"{FASTAPI_URL}/drift-retrain",
+                f"{FASTAPI_URL}/drift/start",
                 files={"file": (csv_file.name, csv_file.read(), "text/csv")},
                 data={"target_col": target_col},
-                timeout=180,
+                timeout=60,
             )
-            result = response.json()
+            try:
+                result = response.json()
+            except ValueError:
+                # FastAPI can return plain-text/HTML on unexpected failures.
+                body_preview = (response.text or "").strip()[:300]
+                detail = body_preview or "Drift check failed with a non-JSON backend response."
+                if is_ajax:
+                    return JsonResponse({"detail": detail}, status=500)
+                return render(request, "drift_upload.html", {"error": detail})
+
             if response.ok:
-                return render(request, "drift_result.html", {"result": result})
-            else:
-                return render(
-                    request, "drift_upload.html",
-                    {"error": result.get("detail", "Drift check failed.")}
-                )
+                if is_ajax:
+                    return JsonResponse(result)
+                return redirect(f"/drift/?job_id={result.get('job_id', '')}")
+
+            detail = result.get("detail") or result.get("message") or "Drift check failed."
+            if is_ajax:
+                return JsonResponse({"detail": detail}, status=response.status_code)
+            return render(
+                request,
+                "drift_upload.html",
+                {"error": detail},
+            )
         except requests.exceptions.ConnectionError:
+            msg = "Cannot connect to FastAPI backend. Make sure it is running on port 8000."
+            if is_ajax:
+                return JsonResponse({"detail": msg}, status=503)
             return render(
                 request, "drift_upload.html",
-                {"error": "Cannot connect to FastAPI backend. Make sure it is running on port 8000."}
+                {"error": msg}
             )
         except Exception as e:
+            if is_ajax:
+                return JsonResponse({"detail": str(e)}, status=500)
             return render(request, "drift_upload.html", {"error": str(e)})
 
     return render(request, "drift_upload.html")
+
+
+def drift_status(request, job_id: str):
+    """Proxy FastAPI async drift status for frontend polling."""
+    try:
+        resp = requests.get(f"{FASTAPI_URL}/drift/status/{job_id}", timeout=20)
+        payload = resp.json()
+        return JsonResponse(payload, status=resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return JsonResponse(
+            {"status": "failed", "detail": "FastAPI backend is unreachable."},
+            status=503,
+        )
+    except Exception as e:
+        return JsonResponse({"status": "failed", "detail": str(e)}, status=500)
 
 
 # ───────────────────────────────────────────────────────────────

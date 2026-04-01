@@ -39,6 +39,14 @@
     .submit-btn:disabled{opacity:0.5;cursor:not-allowed}
     .spinner{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
+    .progress-panel{display:none;margin-top:1rem;background:linear-gradient(135deg,rgba(16,185,129,0.15),rgba(99,102,241,0.12));border:1px solid rgba(16,185,129,0.35);border-radius:12px;padding:1rem}
+    .progress-panel.show{display:block}
+    .progress-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem}
+    .progress-stage{font-size:0.9rem;font-weight:600}
+    .progress-percent{font-size:0.9rem;font-weight:700;color:var(--accent2)}
+    .progress-msg{font-size:0.82rem;color:var(--muted);margin-bottom:0.6rem}
+    .progress-track{height:10px;border-radius:999px;background:rgba(255,255,255,0.1);overflow:hidden}
+    .progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#10b981);transition:width 0.35s ease}
   </style>
 </head>
 <body>
@@ -63,7 +71,7 @@
 
   <div class="warn-box">⚠️ A base model must be trained first before running drift detection. <a href="{% url 'upload' %}" style="color:#fbbf24">Train a model →</a></div>
 
-  <form method="post" enctype="multipart/form-data" id="drift-form">
+  <form method="post" enctype="multipart/form-data" id="drift-form" data-resume-poll="{% if resume_poll %}1{% else %}0{% endif %}" data-job-id="{{ job_id|default:'' }}">
     {% csrf_token %}
     <div class="form-group">
       <label>New Production Data <span class="hint">(CSV)</span></label>
@@ -82,18 +90,107 @@
       <span id="dbtxt">📡 Analyze Drift</span>
       <div class="spinner" id="dspinner"></div>
     </button>
+
+    <div class="progress-panel" id="progress-panel">
+      <div class="progress-head">
+        <div class="progress-stage" id="progress-stage">Stage: queued</div>
+        <div class="progress-percent" id="progress-percent">0%</div>
+      </div>
+      <div class="progress-msg" id="progress-msg">Waiting to start drift analysis...</div>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    </div>
   </form>
 </div>
 <script>
-  document.getElementById('dfile').addEventListener('change',function(){
-    document.getElementById('fname').textContent=this.files[0]?'✅ '+this.files[0].name:'';
+  const form = document.getElementById('drift-form');
+  const fileInput = document.getElementById('dfile');
+  const fileName = document.getElementById('fname');
+  const btn = document.getElementById('dbtn');
+  const btnText = document.getElementById('dbtxt');
+  const spinner = document.getElementById('dspinner');
+  const panel = document.getElementById('progress-panel');
+  const stageEl = document.getElementById('progress-stage');
+  const percentEl = document.getElementById('progress-percent');
+  const msgEl = document.getElementById('progress-msg');
+  const fillEl = document.getElementById('progress-fill');
+
+  function setBusy(on) {
+    btn.disabled = on;
+    spinner.style.display = on ? 'block' : 'none';
+    btnText.textContent = on ? 'Analyzing…' : '📡 Analyze Drift';
+  }
+
+  function updateProgress(payload) {
+    const progress = Number(payload.progress || 0);
+    const stage = payload.stage || 'queued';
+    const message = payload.message || 'Processing...';
+    panel.classList.add('show');
+    stageEl.textContent = 'Stage: ' + stage;
+    percentEl.textContent = progress + '%';
+    msgEl.textContent = message;
+    fillEl.style.width = Math.max(0, Math.min(100, progress)) + '%';
+  }
+
+  async function pollStatus(jobId) {
+    try {
+      const resp = await fetch(`/drift/status/${jobId}/`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      const payload = await resp.json();
+      updateProgress(payload);
+
+      if (payload.status === 'completed') {
+        window.location.href = `/drift/?job_id=${jobId}`;
+        return;
+      }
+      if (payload.status === 'failed') {
+        setBusy(false);
+        msgEl.textContent = payload.error || payload.detail || 'Drift analysis failed.';
+        return;
+      }
+      setTimeout(() => pollStatus(jobId), 2000);
+    } catch (err) {
+      setBusy(false);
+      msgEl.textContent = 'Lost connection while polling drift status.';
+    }
+  }
+
+  fileInput.addEventListener('change', function () {
+    fileName.textContent = this.files[0] ? '✅ ' + this.files[0].name : '';
   });
-  document.getElementById('drift-form').addEventListener('submit',function(){
-    var btn=document.getElementById('dbtn');
-    document.getElementById('dbtxt').textContent='Analyzing…';
-    document.getElementById('dspinner').style.display='block';
-    btn.disabled=true;
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    setBusy(true);
+    panel.classList.add('show');
+
+    const data = new FormData(form);
+    try {
+      const resp = await fetch('/drift/', {
+        method: 'POST',
+        body: data,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        setBusy(false);
+        msgEl.textContent = payload.detail || 'Unable to start drift analysis.';
+        return;
+      }
+      updateProgress({ progress: 3, stage: 'queued', message: 'Drift job accepted. Starting...' });
+      pollStatus(payload.job_id);
+    } catch (err) {
+      setBusy(false);
+      msgEl.textContent = 'Could not start drift analysis.';
+    }
   });
+
+  const resumePoll = form.dataset.resumePoll === '1';
+  const existingJobId = form.dataset.jobId;
+  if (resumePoll && existingJobId) {
+    setBusy(true);
+    panel.classList.add('show');
+    updateProgress({ progress: 5, stage: 'resuming', message: 'Resuming drift analysis...' });
+    pollStatus(existingJobId);
+  }
 </script>
 </body>
 </html>

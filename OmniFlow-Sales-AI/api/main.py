@@ -20,15 +20,20 @@ import pandas as pd
 
 from src.preprocessing import TARGET_DEFAULT, build_training_frame
 from src.inference import predict_from_payload
-from src.training import MODEL_PATH, REFERENCE_STATS_PATH, get_champion_metrics, train_model
+from src.training import MODEL_PATH, REFERENCE_STATS_PATH, get_champion_metrics, train_model, load_champion_model
 from src.drift import detect_drift
 from src.retrain import retrain_model
+
+import numpy as np
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 TRAINING_JOBS: Dict[str, Dict[str, Any]] = {}
 TRAINING_JOBS_LOCK = threading.Lock()
+DRIFT_JOBS: Dict[str, Dict[str, Any]] = {}
+DRIFT_JOBS_LOCK = threading.Lock()
 
 
 def _now_iso() -> str:
@@ -39,6 +44,29 @@ def _update_job(job_id: str, **updates) -> None:
     with TRAINING_JOBS_LOCK:
         if job_id in TRAINING_JOBS:
             TRAINING_JOBS[job_id].update(updates)
+
+
+def _update_drift_job(job_id: str, **updates) -> None:
+    with DRIFT_JOBS_LOCK:
+        if job_id in DRIFT_JOBS:
+            DRIFT_JOBS[job_id].update(_json_safe(updates))
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert numpy/pandas objects into plain JSON-serializable Python types."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, set):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    return value
 
 
 def _run_training_job(job_id: str, train_source: Optional[bytes], target_col: str) -> None:
@@ -253,28 +281,22 @@ def predict_legacy(request: PredictEnvelope):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# POST /drift-retrain
+# POST /drift-retrain (+ async /drift/start)
 # ──────────────────────────────────────────────────────────────────────────────
 
-@app.post("/drift-retrain", tags=["Drift & Retraining"])
-async def drift_retrain(
-    file: UploadFile = File(..., description="New CSV data to check for drift"),
-    target_col: str = Form(default=TARGET_DEFAULT, description="Target column name"),
-):
-    """
-    Upload new production data. The system will:
-    1. Preprocess data (apply same encoding as training).
-    2. Detect statistical drift vs. training baseline.
-    3. If drift is detected → train challenger model.
-    4. Compare challenger vs champion → promote if better.
-    """
-    contents = await file.read()
-
+def _execute_drift_retrain(
+    contents: bytes,
+    target_col: str,
+    progress_callback=None,
+) -> Dict[str, Any]:
     if not REFERENCE_STATS_PATH.exists():
         raise HTTPException(
             status_code=404,
             detail="No reference stats found. Train an initial model first.",
         )
+
+    if progress_callback:
+        progress_callback(10, "preprocessing", "Preparing and validating incoming data...")
 
     try:
         merged_new = build_training_frame(train_source=contents, target_col=target_col)
@@ -286,34 +308,215 @@ async def drift_retrain(
         logger.exception("Preprocessing failed")
         raise HTTPException(status_code=500, detail=f"Preprocessing error: {str(e)}")
 
-    # ── Step 2: Drift Detection ──────────────────────────────────────────────
-    # Now detect drift using the preprocessed features (numeric columns aligned with reference stats)
+    if progress_callback:
+        progress_callback(30, "drift", "Analyzing feature drift against reference baseline...")
+
     try:
         drift_detected, drift_report = detect_drift(X_new)
     except Exception as e:
         logger.exception("Drift detection failed")
         raise HTTPException(status_code=500, detail=f"Drift detection error: {str(e)}")
 
-    response = {
-        "drift_detected": drift_detected,
+    if progress_callback:
+        progress_callback(55, "metrics", "Scoring champion model on the uploaded data...")
+
+    champion_metrics_baseline = get_champion_metrics()
+    new_data_metrics = None
+    performance_degraded = False
+
+    if target_col in merged_new.columns:
+        try:
+            y_new = merged_new[target_col].astype("float64")
+            champion_model = load_champion_model()
+            y_pred = champion_model.predict(X_new)
+
+            r2_new = r2_score(y_new, y_pred)
+            mae_new = mean_absolute_error(y_new, y_pred)
+            rmse_new = np.sqrt(mean_squared_error(y_new, y_pred))
+
+            new_data_metrics = {
+                "r2": round(float(r2_new), 4),
+                "mae": round(float(mae_new), 4),
+                "rmse": round(float(rmse_new), 4),
+            }
+
+            baseline_r2 = champion_metrics_baseline.get("r2", 0)
+            baseline_mae = champion_metrics_baseline.get("mae", float("inf"))
+            baseline_rmse = champion_metrics_baseline.get("rmse", float("inf"))
+
+            r2_drop = baseline_r2 - r2_new
+            mae_increase = ((mae_new - baseline_mae) / baseline_mae * 100) if baseline_mae > 0 else 0
+            rmse_increase = ((rmse_new - baseline_rmse) / baseline_rmse * 100) if baseline_rmse > 0 else 0
+
+            performance_degraded = (r2_drop > 0.05) or (mae_increase > 10) or (rmse_increase > 10)
+
+            logger.info(
+                "Champion on new data: R2=%.4f, MAE=%.4f, RMSE=%.4f | "
+                "R2 drop=%.4f, MAE +%.2f%%, RMSE +%.2f%%",
+                r2_new,
+                mae_new,
+                rmse_new,
+                r2_drop,
+                mae_increase,
+                rmse_increase,
+            )
+        except Exception as e:
+            logger.warning("Could not calculate champion metrics on new data: %s", e)
+
+    if progress_callback:
+        progress_callback(75, "decision", "Evaluating self-healing strategy...")
+
+    response: Dict[str, Any] = {
+        "drift_detected": bool(drift_detected),
+        "drift_ratio": float(drift_report["drift_ratio"]),
         "drift_summary": {
             "drifted_features": drift_report["drifted_features"],
-            "drift_ratio": drift_report["drift_ratio"],
-            "feature_report": drift_report["feature_report"],
+            "drift_ratio": float(drift_report["drift_ratio"]),
+            "feature_report": _json_safe(drift_report["feature_report"]),
         },
+        "champion_metrics_baseline": champion_metrics_baseline,
+        "new_data_metrics": new_data_metrics,
+        "performance_degraded": bool(performance_degraded),
         "retrain_triggered": False,
         "retrain_result": None,
+        "recommendation": "Champion Retained",
+        "decision_reason": "No retraining condition was met.",
     }
 
-    # ── Step 3: Retraining (only if drift detected) ──────────────────────────
-    if drift_detected:
-        logger.info("Drift detected — initiating retraining pipeline...")
+    should_retrain = (
+        (drift_detected and performance_degraded)
+        or (drift_report["drift_ratio"] > 0.75)
+    )
+
+    if should_retrain:
+        if progress_callback:
+            progress_callback(88, "retraining", "Training challenger model for self-healing...")
         try:
             retrain_result = retrain_model(contents, target_col=target_col)
             response["retrain_triggered"] = True
             response["retrain_result"] = retrain_result
+
+            if retrain_result.get("replaced"):
+                response["recommendation"] = "Challenger Deployed (Self-Healed)"
+                response["decision_reason"] = (
+                    "Drift was high and challenger outperformed champion by the promotion threshold."
+                )
+            else:
+                response["recommendation"] = "Champion Retained"
+                response["decision_reason"] = (
+                    "Drift triggered retraining, but challenger did not beat champion by the promotion threshold."
+                )
         except Exception as e:
             logger.exception("Retraining failed")
             response["retrain_error"] = str(e)
+            response["recommendation"] = "Champion Retained (Retrain Failed)"
+            response["decision_reason"] = "Retraining failed due to an internal error; champion kept for safety."
+    else:
+        if drift_detected and not performance_degraded:
+            response["decision_reason"] = "Drift detected, but champion metrics stayed within guardrails."
+        elif not drift_detected:
+            response["decision_reason"] = "No significant drift detected."
+        else:
+            response["decision_reason"] = "Drift detected with mild impact; retraining threshold not reached."
 
-    return response
+    if progress_callback:
+        progress_callback(100, "done", "Drift analysis completed.")
+
+    return _json_safe(response)
+
+
+def _run_drift_job(job_id: str, contents: bytes, target_col: str) -> None:
+    def progress_callback(progress: int, stage: str, message: str) -> None:
+        _update_drift_job(job_id, progress=progress, stage=stage, message=message, updated_at=_now_iso())
+
+    try:
+        _update_drift_job(job_id, status="running", started_at=_now_iso())
+        result = _execute_drift_retrain(contents, target_col, progress_callback=progress_callback)
+        _update_drift_job(
+            job_id,
+            status="completed",
+            progress=100,
+            stage="done",
+            message="Drift analysis completed successfully.",
+            result=result,
+            completed_at=_now_iso(),
+            updated_at=_now_iso(),
+        )
+    except HTTPException as e:
+        _update_drift_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            message=e.detail,
+            error=e.detail,
+            completed_at=_now_iso(),
+            updated_at=_now_iso(),
+        )
+    except Exception as e:
+        logger.exception("Async drift-retrain failed for job %s", job_id)
+        _update_drift_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            message=str(e),
+            error=f"Drift-retrain error: {str(e)}",
+            completed_at=_now_iso(),
+            updated_at=_now_iso(),
+        )
+
+
+@app.post("/drift/start", tags=["Drift & Retraining"])
+async def start_drift(
+    file: UploadFile = File(..., description="New CSV data to check for drift"),
+    target_col: str = Form(default=TARGET_DEFAULT, description="Target column name"),
+):
+    contents = await file.read()
+    job_id = str(uuid.uuid4())
+
+    with DRIFT_JOBS_LOCK:
+        DRIFT_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "stage": "queued",
+            "message": "Drift analysis request accepted.",
+            "target_column": target_col,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "result": None,
+            "error": None,
+        }
+
+    thread = threading.Thread(
+        target=_run_drift_job,
+        args=(job_id, contents, target_col),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "status": "accepted",
+        "job_id": job_id,
+        "poll_url": f"/drift/status/{job_id}",
+    }
+
+
+@app.get("/drift/status/{job_id}", tags=["Drift & Retraining"])
+def drift_status(job_id: str):
+    with DRIFT_JOBS_LOCK:
+        job = DRIFT_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Drift job not found")
+    return _json_safe(job)
+
+@app.post("/drift-retrain", tags=["Drift & Retraining"])
+async def drift_retrain(
+    file: UploadFile = File(..., description="New CSV data to check for drift"),
+    target_col: str = Form(default=TARGET_DEFAULT, description="Target column name"),
+):
+    """
+    Synchronous drift+retrain endpoint for backward compatibility.
+    Prefer /drift/start + /drift/status/{job_id} for progress-aware UX.
+    """
+    contents = await file.read()
+    return _execute_drift_retrain(contents, target_col)
