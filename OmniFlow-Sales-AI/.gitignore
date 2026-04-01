@@ -1,6 +1,6 @@
-
 # Large data files
 data/raw/*.csv
+data/processed/*.csv
 powerbi/*.csv
 
 # Python cache
@@ -8,26 +8,52 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.pytest_cache/
 
 # Environment
 .venv/
 venv/
 env/
+.env
 
 # IDE
 .vscode/
 .idea/
 *.swp
+*.swo
+*.iml
 
 # ML artifacts
 mlruns/
+mlflow.db
 *.joblib
 *.pkl
+models/*.joblib
+models/*.json
 
 # Django
 *.db
 db.sqlite3
+django_db/
 
 # OS
 .DS_Store
 Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# IDE generated
+*.sublime-project
+*.sublime-workspace
