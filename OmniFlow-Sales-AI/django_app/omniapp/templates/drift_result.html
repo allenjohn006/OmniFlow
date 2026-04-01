@@ -113,8 +113,8 @@
       <div class="s-value">{{ result.drift_summary.drift_ratio }}</div>
     </div>
     <div class="stat-pill">
-      <div class="s-label">Retrain Triggered</div>
-      <div class="s-value">{% if result.retrain_triggered %}Yes{% else %}No{% endif %}</div>
+      <div class="s-label">Decision</div>
+      <div class="s-value" style="font-size:1.1rem">{% if result.retrain_triggered %}🔄 Retrain{% else %}✅ Retain{% endif %}</div>
     </div>
   </div>
 
@@ -140,9 +140,39 @@
     {% if result.new_data_metrics %}
     <div class="section-title" style="margin-top:1.25rem">Champion Performance on New Data</div>
     <div class="metrics-mini">
-      <div class="m-mini"><div class="ml">R² Score</div><div class="mv mv-green">{{ result.new_data_metrics.r2 }}</div></div>
-      <div class="m-mini"><div class="ml">MAE</div><div class="mv mv-yellow">{{ result.new_data_metrics.mae }}</div></div>
-      <div class="m-mini"><div class="ml">RMSE</div><div class="mv mv-accent">{{ result.new_data_metrics.rmse }}</div></div>
+      <div class="m-mini">
+        <div class="ml">R² Score</div>
+        <div class="mv mv-green">{{ result.new_data_metrics.r2 }}</div>
+        <div class="ml" style="color:var(--muted);font-size:0.65rem;margin-top:0.25rem">
+          {% if result.new_data_metrics.r2_change_pct >= 0 %}
+            ↑ +{{ result.new_data_metrics.r2_change_pct }}%
+          {% else %}
+            ↓ {{ result.new_data_metrics.r2_change_pct }}%
+          {% endif %}
+        </div>
+      </div>
+      <div class="m-mini">
+        <div class="ml">MAE</div>
+        <div class="mv mv-yellow">{{ result.new_data_metrics.mae }}</div>
+        <div class="ml" style="color:var(--muted);font-size:0.65rem;margin-top:0.25rem">
+          {% if result.new_data_metrics.mae_change_pct >= 0 %}
+            ↑ +{{ result.new_data_metrics.mae_change_pct }}%
+          {% else %}
+            ↓ {{ result.new_data_metrics.mae_change_pct }}%
+          {% endif %}
+        </div>
+      </div>
+      <div class="m-mini">
+        <div class="ml">RMSE</div>
+        <div class="mv mv-accent">{{ result.new_data_metrics.rmse }}</div>
+        <div class="ml" style="color:var(--muted);font-size:0.65rem;margin-top:0.25rem">
+          {% if result.new_data_metrics.rmse_change_pct >= 0 %}
+            ↑ +{{ result.new_data_metrics.rmse_change_pct }}%
+          {% else %}
+            ↓ {{ result.new_data_metrics.rmse_change_pct }}%
+          {% endif %}
+        </div>
+      </div>
     </div>
     {% endif %}
 
@@ -151,6 +181,10 @@
     <div class="retained-tag" style="margin-top:1.25rem">⚠️ Performance Degraded: Champion metrics declined on new data</div>
     {% else %}
     <div class="promoted-tag" style="margin-top:1.25rem">✅ Performance Stable: Champion metrics remain consistent</div>
+    <p style="color:var(--accent2);font-size:0.8rem;margin-top:0.5rem">
+      ✔ Model performance stable despite drift<br/>
+      ✔ No retraining required
+    </p>
     {% endif %}
   </div>
 

@@ -344,22 +344,33 @@ def _execute_drift_retrain(
             baseline_mae = champion_metrics_baseline.get("mae", float("inf"))
             baseline_rmse = champion_metrics_baseline.get("rmse", float("inf"))
 
+            # Calculate percentage changes
+            r2_change_pct = ((r2_new - baseline_r2) / abs(baseline_r2) * 100) if baseline_r2 != 0 else 0
+            mae_change_pct = ((mae_new - baseline_mae) / baseline_mae * 100) if baseline_mae > 0 else 0
+            rmse_change_pct = ((rmse_new - baseline_rmse) / baseline_rmse * 100) if baseline_rmse > 0 else 0
+
+            # Absolute drop for guardrail comparison
             r2_drop = baseline_r2 - r2_new
-            mae_increase = ((mae_new - baseline_mae) / baseline_mae * 100) if baseline_mae > 0 else 0
-            rmse_increase = ((rmse_new - baseline_rmse) / baseline_rmse * 100) if baseline_rmse > 0 else 0
+            mae_increase = mae_change_pct
+            rmse_increase = rmse_change_pct
 
             performance_degraded = (r2_drop > 0.05) or (mae_increase > 10) or (rmse_increase > 10)
 
             logger.info(
                 "Champion on new data: R2=%.4f, MAE=%.4f, RMSE=%.4f | "
-                "R2 drop=%.4f, MAE +%.2f%%, RMSE +%.2f%%",
+                "R2 change=%.2f%%, MAE change=%.2f%%, RMSE change=%.2f%%",
                 r2_new,
                 mae_new,
                 rmse_new,
-                r2_drop,
-                mae_increase,
-                rmse_increase,
+                r2_change_pct,
+                mae_change_pct,
+                rmse_change_pct,
             )
+
+            # Add percentage changes to metrics
+            new_data_metrics["r2_change_pct"] = round(float(r2_change_pct), 2)
+            new_data_metrics["mae_change_pct"] = round(float(mae_change_pct), 2)
+            new_data_metrics["rmse_change_pct"] = round(float(rmse_change_pct), 2)
         except Exception as e:
             logger.warning("Could not calculate champion metrics on new data: %s", e)
 
