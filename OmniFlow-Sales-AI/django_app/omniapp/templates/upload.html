@@ -20,7 +20,7 @@
       backdrop-filter: blur(12px); border-bottom: 1px solid var(--border);
       position: sticky; top: 0; z-index: 100;
     }
-    .nav-logo { font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; }
+    .nav-logo { font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, #6366f1, #a78bfa); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; }
     .nav-links { display: flex; gap: 0.5rem; }
     .nav-links a { padding: 0.45rem 1rem; border-radius: 8px; text-decoration: none; font-size: 0.9rem; color: var(--muted); transition: all 0.2s; }
     .nav-links a:hover, .nav-links a.active { background: var(--border); color: var(--text); }
@@ -69,6 +69,22 @@
     .info-box ul li::before { content: "→ "; color: var(--accent); }
 
     .spinner { display: none; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    .training-panel {
+      background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(16,185,129,0.08));
+      border: 1px solid rgba(99,102,241,0.35); border-radius: 12px; padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem; display: none;
+    }
+    .training-panel.show { display: block; }
+    .training-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+    .training-stage { font-size: 0.9rem; color: var(--accent2); font-weight: 600; }
+    .training-percent { font-size: 0.9rem; color: var(--text); font-weight: 700; }
+    .progress-track { width: 100%; height: 10px; border-radius: 999px; background: rgba(17,24,39,0.7); border: 1px solid var(--border); overflow: hidden; }
+    .progress-fill {
+      width: 0%; height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, #6366f1, #10b981);
+      transition: width 0.35s ease;
+    }
+    .training-message { margin-top: 0.6rem; color: var(--muted); font-size: 0.84rem; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
     .page-wrap { animation: fadeIn 0.4s ease; }
@@ -89,7 +105,7 @@
   <div class="page-header">
     <div class="badge">📤 Model Training</div>
     <h1>Train a New Model</h1>
-    <p>Upload a CSV file, pick your target column, and we'll train a RandomForest model.</p>
+    <p>Upload a CSV file, pick your target column, and we'll train an XGBoost model with a unified preprocessing pipeline.</p>
   </div>
 
   {% if error %}
@@ -100,14 +116,25 @@
     <h3>ℹ️ What happens during training?</h3>
     <ul>
       <li>Missing values are filled automatically</li>
-      <li>Categorical columns are label-encoded</li>
-      <li>A RandomForestRegressor (200 trees) is trained</li>
-      <li>Model + encoders + reference stats are saved</li>
-      <li>Experiment tracked in MLflow</li>
+      <li>Categorical columns are one-hot encoded</li>
+      <li>An XGBoost regressor is trained with a temporal split</li>
+      <li>Unified pipeline + reference stats are saved</li>
+      <li>Champion metrics are exposed via the health endpoint</li>
     </ul>
   </div>
 
-  <form method="post" enctype="multipart/form-data" id="train-form">
+  <div class="training-panel" id="training-panel">
+    <div class="training-head">
+      <div class="training-stage" id="training-stage">Preparing training job...</div>
+      <div class="training-percent" id="training-percent">0%</div>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <div class="training-message" id="training-message">Waiting for backend...</div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" id="train-form" data-resume-poll="{% if resume_poll %}true{% else %}false{% endif %}" data-job-id="{% if job_id %}{{ job_id }}{% endif %}">
     {% csrf_token %}
 
     <div class="form-group">
@@ -133,6 +160,10 @@
 </div>
 
 <script>
+  const trainForm = document.getElementById('train-form');
+  const resumePoll = trainForm.dataset.resumePoll === 'true';
+  const initialJobId = trainForm.dataset.jobId || '';
+
   // File name display
   document.getElementById('csv-file').addEventListener('change', function() {
     const name = this.files[0]?.name || '';
@@ -149,13 +180,87 @@
     if (f) { document.getElementById('csv-file').files = e.dataTransfer.files; document.getElementById('file-name').textContent = `✅ ${f.name}`; }
   });
 
-  // Loading state
-  document.getElementById('train-form').addEventListener('submit', function() {
+  const trainingPanel = document.getElementById('training-panel');
+  const trainingStage = document.getElementById('training-stage');
+  const trainingPercent = document.getElementById('training-percent');
+  const progressFill = document.getElementById('progress-fill');
+  const trainingMessage = document.getElementById('training-message');
+
+  function updateProgress(payload) {
+    const pct = Math.max(0, Math.min(100, Number(payload.progress || 0)));
+    trainingPanel.classList.add('show');
+    trainingStage.textContent = payload.stage ? `Stage: ${payload.stage}` : 'Training in progress';
+    trainingPercent.textContent = `${pct}%`;
+    progressFill.style.width = `${pct}%`;
+    trainingMessage.textContent = payload.message || 'Processing training job...';
+  }
+
+  async function pollStatus(jobId) {
+    try {
+      const resp = await fetch(`/upload/status/${jobId}/`);
+      const payload = await resp.json();
+      updateProgress(payload);
+
+      if (payload.status === 'completed') {
+        trainingStage.textContent = 'Stage: done';
+        trainingMessage.textContent = 'Training complete. Opening results...';
+        window.location.href = `/train/?job_id=${jobId}`;
+        return;
+      }
+
+      if (payload.status === 'failed') {
+        trainingMessage.textContent = payload.error || payload.detail || 'Training failed.';
+        document.getElementById('btn-text').textContent = '🚀 Train Model';
+        document.getElementById('spinner').style.display = 'none';
+        document.getElementById('submit-btn').disabled = false;
+        return;
+      }
+
+      setTimeout(() => pollStatus(jobId), 2000);
+    } catch (err) {
+      trainingMessage.textContent = `Status check failed: ${err}`;
+      setTimeout(() => pollStatus(jobId), 3000);
+    }
+  }
+
+  // Async submit with live progress
+  trainForm.addEventListener('submit', async function(e) {
+    e.preventDefault();
     const btn = document.getElementById('submit-btn');
     document.getElementById('btn-text').textContent = 'Training…';
     document.getElementById('spinner').style.display = 'block';
     btn.disabled = true;
+
+    trainingPanel.classList.add('show');
+    updateProgress({ progress: 1, stage: 'queued', message: 'Uploading dataset...' });
+
+    const formData = new FormData(this);
+    try {
+      const resp = await fetch('', {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: formData,
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        throw new Error(payload.detail || 'Could not start training job.');
+      }
+
+      updateProgress({ progress: 3, stage: 'accepted', message: 'Training job accepted by backend.' });
+      pollStatus(payload.job_id);
+    } catch (err) {
+      trainingMessage.textContent = `Error: ${err}`;
+      document.getElementById('btn-text').textContent = '🚀 Train Model';
+      document.getElementById('spinner').style.display = 'none';
+      btn.disabled = false;
+    }
   });
+
+  if (resumePoll && initialJobId) {
+    trainingPanel.classList.add('show');
+    updateProgress({ progress: 2, stage: 'resume', message: 'Resuming previous training job...' });
+    pollStatus(initialJobId);
+  }
 </script>
 </body>
 </html>

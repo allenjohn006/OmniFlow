@@ -1,21 +1,37 @@
-"""Retraining module — champion vs challenger model comparison and safe replacement."""
+"""Retraining module with champion-challenger promotion."""
 
-import joblib
+from __future__ import annotations
+
 import json
 import logging
 import shutil
-from pathlib import Path
 
-from src.preprocessing import preprocess_data, split_data
-from src.training import train_model, get_champion_metrics, MODEL_PATH, METRICS_PATH, MODELS_DIR
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+from src.preprocessing import FEATURE_COLUMNS, TARGET_DEFAULT, build_training_frame, validate_feature_frame
+from src.training import MODEL_PATH, METRICS_PATH, MODELS_DIR, build_pipeline, get_champion_metrics
 
 logger = logging.getLogger(__name__)
 
-CHALLENGER_PATH = MODELS_DIR / "challenger_model.pkl"
+PROMOTION_THRESHOLD = 0.02
+
+CHALLENGER_PATH = MODELS_DIR / "challenger.joblib"
 CHALLENGER_METRICS_PATH = MODELS_DIR / "challenger_metrics.json"
 
 
-def retrain_model(new_df, target_col: str) -> dict:
+def _assert_feature_matrix_schema(X: pd.DataFrame, frame_name: str) -> None:
+    actual = list(X.columns)
+    if actual != FEATURE_COLUMNS:
+        raise ValueError(
+            f"{frame_name} feature columns do not match expected schema. "
+            f"Expected {FEATURE_COLUMNS}, got {actual}"
+        )
+
+
+def retrain_model(train_source, target_col: str = TARGET_DEFAULT) -> dict:
     """
     Train a challenger model on new data and compare it against the champion.
 
@@ -30,16 +46,41 @@ def retrain_model(new_df, target_col: str) -> dict:
     """
     logger.info("Starting challenger model training...")
 
-    # Preprocess new data (fit=False so we don't overwrite reference stats)
-    X, y = preprocess_data(new_df, target_col=target_col, is_training=False)
-    X_train, X_test, y_train, y_test = split_data(X, y)
+    frame = build_training_frame(train_source=train_source, target_col=target_col)
+    # Use datetime comparison properly
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame = frame.dropna(subset=["date", target_col])
+    train_mask = frame["date"] < pd.Timestamp("2016-01-01")
+    train_df = frame[train_mask]
+    test_df = frame[~train_mask]
+    if train_df.empty or test_df.empty:
+        raise ValueError("Temporal split failed for retraining dataset.")
 
-    # Train challenger
-    challenger_metrics = train_model(X_train, X_test, y_train, y_test, model_name="challenger")
+    # Select only feature columns (exclude date and target)
+    X_train = train_df[FEATURE_COLUMNS].copy()
+    y_train = train_df[target_col].copy()
+    X_test = test_df[FEATURE_COLUMNS].copy()
+    y_test = test_df[target_col].copy()
 
-    # Save challenger separately
-    challenger_src = MODELS_DIR / "challenger_model.pkl"
-    with open(CHALLENGER_METRICS_PATH, "w") as f:
+    _assert_feature_matrix_schema(X_train, "X_train")
+    _assert_feature_matrix_schema(X_test, "X_test")
+    validate_feature_frame(X_train)
+    validate_feature_frame(X_test)
+
+    challenger = build_pipeline()
+    challenger.fit(X_train, y_train)
+    y_pred = challenger.predict(X_test)
+
+    challenger_metrics = {
+        "r2": round(float(r2_score(y_test, y_pred)), 4),
+        "mae": round(float(mean_absolute_error(y_test, y_pred)), 4),
+        "rmse": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 4),
+        "train_rows": int(len(train_df)),
+        "test_rows": int(len(test_df)),
+    }
+
+    joblib.dump(challenger, CHALLENGER_PATH)
+    with open(CHALLENGER_METRICS_PATH, "w", encoding="utf-8") as f:
         json.dump(challenger_metrics, f, indent=2)
 
     # Compare with champion
@@ -48,13 +89,13 @@ def retrain_model(new_df, target_col: str) -> dict:
     challenger_r2 = challenger_metrics.get("r2", -9999)
 
     replaced = False
-    if challenger_r2 > champion_r2:
+    if challenger_r2 > champion_r2 + PROMOTION_THRESHOLD:
         logger.info(
-            f"Challenger R²={challenger_r2} beats Champion R²={champion_r2}. Replacing champion."
+            f"Challenger R²={challenger_r2} beats Champion R²={champion_r2} + {PROMOTION_THRESHOLD}. Replacing champion."
         )
         # Overwrite champion with challenger
-        shutil.copy(challenger_src, MODEL_PATH)
-        with open(METRICS_PATH, "w") as f:
+        shutil.copy(CHALLENGER_PATH, MODEL_PATH)
+        with open(METRICS_PATH, "w", encoding="utf-8") as f:
             json.dump(challenger_metrics, f, indent=2)
         replaced = True
     else:

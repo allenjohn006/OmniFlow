@@ -1,1 +1,1 @@
-["Date", "Product_Category", "Price", "Discount", "Customer_Segment", "Marketing_Spend"]
+["id", "date", "store_nbr", "family", "onpromotion"]

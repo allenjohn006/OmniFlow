@@ -12,7 +12,18 @@ PROJECT_ROOT = Path(__file__).parent
 def run_api():
     """Start FastAPI backend"""
     print("\n🚀 Starting FastAPI Backend (port 8000)...\n")
-    subprocess.run([sys.executable, "run_api.py"], cwd=PROJECT_ROOT)
+    subprocess.run([
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "api.main:app",
+        "--app-dir",
+        str(PROJECT_ROOT),
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+    ], cwd=PROJECT_ROOT)
 
 def run_web():
     """Start Django frontend"""
@@ -22,7 +33,7 @@ def run_web():
 def run_train():
     """Train the model"""
     print("\n🚀 Training model...\n")
-    subprocess.run([sys.executable, "train_initial_model.py"], cwd=PROJECT_ROOT)
+    subprocess.run([sys.executable, "-c", "from src.training import train_model; print(train_model())"], cwd=PROJECT_ROOT)
 
 def run_all():
     """Start both servers"""
@@ -31,7 +42,18 @@ def run_all():
     print("="*70 + "\n")
     
     print("[1/2] Starting FastAPI Backend (port 8000)...")
-    subprocess.Popen([sys.executable, "run_api.py"], cwd=PROJECT_ROOT)
+    subprocess.Popen([
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "api.main:app",
+        "--app-dir",
+        str(PROJECT_ROOT),
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+    ], cwd=PROJECT_ROOT)
     time.sleep(2)
     
     print("[2/2] Starting Django Frontend (port 8080)...")

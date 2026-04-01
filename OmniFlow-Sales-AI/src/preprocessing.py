@@ -1,152 +1,187 @@
-"""Data preprocessing module — handles missing values, encoding, and train/test splitting."""
+"""Shared preprocessing utilities for Store Sales training, inference, and retraining."""
 
-import pandas as pd
-import numpy as np
-import joblib
-import json
+from __future__ import annotations
+
+import io
 import logging
 from pathlib import Path
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
+from typing import Dict, Optional
+
+import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
-MODELS_DIR = PROJECT_ROOT / "models"
-MODELS_DIR.mkdir(exist_ok=True)
+RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
-PREPROCESSOR_PATH = MODELS_DIR / "preprocessors.pkl"
-FEATURE_COLS_PATH = MODELS_DIR / "feature_columns.json"
-REFERENCE_STATS_PATH = MODELS_DIR / "reference_stats.json"
+TRAIN_FILE = RAW_DIR / "train.csv"
+STORES_FILE = RAW_DIR / "stores.csv"
+OIL_FILE = RAW_DIR / "oil.csv"
+HOLIDAYS_FILE = RAW_DIR / "holidays_events.csv"
+
+TARGET_DEFAULT = "sales"
+
+CATEGORICAL_FEATURES = ["family", "city", "state", "type", "holiday_type"]
+NUMERICAL_FEATURES = [
+    "store_nbr",
+    "cluster",
+    "onpromotion",
+    "dcoilwtico",
+    "lag_7",
+    "year",
+    "month",
+    "dayofweek",
+    "is_weekend",
+    "is_salary_day",
+]
+FEATURE_COLUMNS = CATEGORICAL_FEATURES + NUMERICAL_FEATURES
 
 
-def preprocess_data(df: pd.DataFrame, target_col: str, is_training: bool = True):
-    """
-    Preprocess the raw dataframe.
+def _read_csv_from_source(file_source) -> pd.DataFrame:
+    if isinstance(file_source, bytes):
+        return pd.read_csv(io.BytesIO(file_source))
+    if isinstance(file_source, (str,)) or hasattr(file_source, "__fspath__"):
+        return pd.read_csv(file_source)
+    return pd.read_csv(file_source)
 
-    - Drops rows where target is null.
-    - Fills numeric NaNs with column mean.
-    - Fills categorical NaNs with column mode.
-    - Label-encodes all object/category columns.
-    - During training: saves encoders + feature columns + reference stats.
-    - During inference: loads saved encoders and reindexes columns.
 
-    Args:
-        df: Raw dataframe.
-        target_col: Name of the target column.
-        is_training: If True, fit+save encoders. If False, load saved encoders.
+def _build_holiday_lookup(holidays_df: pd.DataFrame) -> pd.DataFrame:
+    df = holidays_df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    if "transferred" in df.columns:
+        df = df[df["transferred"].astype(str).str.lower() != "true"]
+    df["holiday_type"] = df.get("type", "None").fillna("None")
+    lookup = (
+        df.sort_values("date")
+        .groupby("date", as_index=False)["holiday_type"]
+        .first()
+    )
+    return lookup
 
-    Returns:
-        X (pd.DataFrame), y (pd.Series or None if target absent)
-    """
-    df = df.copy()
 
-    # ── Drop target NaNs ────────────────────────────────────────────────────
-    if target_col in df.columns:
-        logger.info(f"Original columns: {df.columns.tolist()}")
-        df = df.dropna(subset=[target_col])
-        y = df[target_col].reset_index(drop=True)
-        df = df.drop(columns=[target_col])
-        logger.info(f"After removing target '{target_col}': {df.columns.tolist()}")
+def merge_store_sales_sources(train_df: pd.DataFrame) -> pd.DataFrame:
+    """Merge train rows with store/oil/holiday side tables using local raw data files."""
+    stores_df = pd.read_csv(STORES_FILE)
+    oil_df = pd.read_csv(OIL_FILE)
+    holidays_df = pd.read_csv(HOLIDAYS_FILE)
+
+    df = train_df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    stores_df["store_nbr"] = pd.to_numeric(stores_df["store_nbr"], errors="coerce")
+    oil_df["date"] = pd.to_datetime(oil_df["date"], errors="coerce")
+
+    holiday_lookup = _build_holiday_lookup(holidays_df)
+
+    df = df.merge(stores_df, on="store_nbr", how="left")
+    df = df.merge(oil_df[["date", "dcoilwtico"]], on="date", how="left")
+    df = df.merge(holiday_lookup, on="date", how="left")
+    df["holiday_type"] = df["holiday_type"].fillna("None")
+    return df
+
+
+def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["year"] = out["date"].dt.year
+    out["month"] = out["date"].dt.month
+    out["dayofweek"] = out["date"].dt.dayofweek
+    out["is_weekend"] = out["dayofweek"].isin([5, 6]).astype(int)
+    out["is_salary_day"] = out["date"].dt.day.isin([15, 30]).astype(int)
+    return out
+
+
+def add_lag_feature(df: pd.DataFrame, fallback_lag_7: Optional[float] = None) -> pd.DataFrame:
+    out = df.copy()
+    if "lag_7" in out.columns:
+        out["lag_7"] = pd.to_numeric(out["lag_7"], errors="coerce")
+        return out
+
+    if "sales" in out.columns:
+        out = out.sort_values(["store_nbr", "family", "date"])
+        out["lag_7"] = out.groupby(["store_nbr", "family"])["sales"].shift(7)
     else:
-        logger.info(f"Target col '{target_col}' not found. Available: {df.columns.tolist()}")
-        y = None
+        out["lag_7"] = fallback_lag_7 if fallback_lag_7 is not None else 0.0
 
-    # ── Drop non-informative columns ─────────────────────────────────────────
-    # Columns with >60% missing
-    cols_to_drop = []
-    for col in df.columns:
-        if df[col].isnull().mean() > 0.6:
-            cols_to_drop.append(col)
-    
-    # ── Handle Date column explicitly ────────────────────────────────────────
-    # Convert datetime columns to ordinal BEFORE other processing
-    date_cols = []
-    for col in df.columns:
-        if col not in cols_to_drop:
-            # Check if column looks like a date
-            if df[col].dtype == 'object' or 'date' in col.lower():
-                try:
-                    df[col] = pd.to_datetime(df[col], format="%Y-%m-%d", errors='coerce')
-                    # If conversion worked and we have mostly non-null values, convert to ordinal
-                    if df[col].notna().sum() / len(df) > 0.9:
-                        logger.info(f"Converting {col} to ordinal")
-                        df[col] = df[col].map(lambda x: x.toordinal() if pd.notnull(x) else np.nan)
-                        date_cols.append(col)
-                except Exception as e:
-                    logger.debug(f"Could not parse {col} as date: {e}")
-    
-    df = df.drop(columns=cols_to_drop, errors="ignore")
+    if fallback_lag_7 is None:
+        fallback_lag_7 = 0.0
+    out["lag_7"] = out["lag_7"].fillna(fallback_lag_7)
+    return out
 
-    # ── Identify column types ────────────────────────────────────────────────
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
 
-    # ── Fill missing values ──────────────────────────────────────────────────
-    for col in numeric_cols:
-        df[col] = df[col].fillna(df[col].mean())
-    for col in cat_cols:
-        mode_val = df[col].mode()
-        df[col] = df[col].fillna(mode_val[0] if len(mode_val) > 0 else "Unknown")
+def normalize_feature_types(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in CATEGORICAL_FEATURES:
+        if col not in out.columns:
+            out[col] = "Unknown"
+        out[col] = out[col].astype(str).fillna("Unknown")
 
-    # ── Encode categorical columns ───────────────────────────────────────────
-    encoders = {}
-    if is_training:
-        for col in cat_cols:
-            le = LabelEncoder()
-            df[col] = le.fit_transform(df[col].astype(str))
-            encoders[col] = le
+    for col in NUMERICAL_FEATURES:
+        if col not in out.columns:
+            out[col] = 0.0
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype("float64")
 
-        # Save encoders
-        joblib.dump(encoders, PREPROCESSOR_PATH)
-        logger.info(f"Saved encoders for columns: {list(encoders.keys())}")
+    out["dcoilwtico"] = out["dcoilwtico"].ffill().bfill().fillna(0.0)
+    out[NUMERICAL_FEATURES] = out[NUMERICAL_FEATURES].fillna(0.0).astype("float64")
+    return out
 
-        # Save feature column order
-        feature_cols = df.columns.tolist()
-        logger.info(f"Saving feature columns (len={len(feature_cols)}): {feature_cols}")
-        with open(FEATURE_COLS_PATH, "w") as f:
-            json.dump(feature_cols, f)
-        logger.info(f"✅ Saved feature columns to {FEATURE_COLS_PATH}")
 
-        # ── Save reference stats for drift detection ─────────────────────────
-        numeric_df = df[df.select_dtypes(include=[np.number]).columns]
-        reference_stats = {}
-        for col in numeric_df.columns:
-            reference_stats[col] = {
-                "mean": float(numeric_df[col].mean()),
-                "std": float(numeric_df[col].std()),
-                "min": float(numeric_df[col].min()),
-                "max": float(numeric_df[col].max()),
-            }
-        with open(REFERENCE_STATS_PATH, "w") as f:
-            json.dump(reference_stats, f, indent=2)
-        logger.info("Saved reference statistics for drift detection.")
+def validate_feature_frame(df: pd.DataFrame) -> None:
+    """Validate feature schema before model fit/predict to fail early with clear errors."""
+    missing = [col for col in FEATURE_COLUMNS if col not in df.columns]
+    if missing:
+        raise ValueError(f"Feature frame is missing required columns: {missing}")
 
+    datetime_features = [col for col in FEATURE_COLUMNS if is_datetime64_any_dtype(df[col])]
+    if datetime_features:
+        raise ValueError(
+            f"Datetime columns found in model features: {datetime_features}. "
+            "Ensure `date` is excluded and only engineered numeric/categorical features are used."
+        )
+
+    non_numeric = [col for col in NUMERICAL_FEATURES if not is_numeric_dtype(df[col])]
+    if non_numeric:
+        raise ValueError(f"Non-numeric dtypes found in numerical features: {non_numeric}")
+
+
+def build_training_frame(train_source=None, target_col: str = TARGET_DEFAULT) -> pd.DataFrame:
+    """
+    Build merged and feature-engineered training frame.
+
+    `train_source` can be None (use data/raw/train.csv), file path, or uploaded bytes.
+    """
+    if train_source is None:
+        train_df = pd.read_csv(TRAIN_FILE)
     else:
-        # Load saved encoders
-        if PREPROCESSOR_PATH.exists():
-            encoders = joblib.load(PREPROCESSOR_PATH)
-        for col in cat_cols:
-            if col in encoders:
-                le = encoders[col]
-                # Handle unseen labels gracefully
-                known_classes = set(le.classes_)
-                df[col] = df[col].astype(str).map(
-                    lambda x: x if x in known_classes else le.classes_[0]
-                )
-                df[col] = le.transform(df[col])
-            else:
-                df[col] = 0  # fallback for unknown new columns
+        train_df = _read_csv_from_source(train_source)
 
-        # Reorder / add missing columns to match training schema
-        if FEATURE_COLS_PATH.exists():
-            with open(FEATURE_COLS_PATH) as f:
-                feature_cols = json.load(f)
-            df = df.reindex(columns=feature_cols, fill_value=0)
+    required = {"date", "store_nbr", "family", "onpromotion"}
+    missing = required - set(train_df.columns)
+    if missing:
+        raise ValueError(f"Training data missing required columns: {sorted(missing)}")
+    if target_col not in train_df.columns:
+        raise ValueError(f"Target column '{target_col}' not found in training data")
 
-    return df, y
+    df = merge_store_sales_sources(train_df)
+    df = add_time_features(df)
+    df = add_lag_feature(df)
+    df = normalize_feature_types(df)
+    df = df.dropna(subset=[target_col, "date"])
+    validate_feature_frame(df)
+    return df
 
 
-def split_data(X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42):
-    """Split data into train and test sets."""
-    return train_test_split(X, y, test_size=test_size, random_state=random_state)
+def build_inference_frame(payload: Dict) -> pd.DataFrame:
+    """Build a single-row inference frame without joining raw CSV files."""
+    df = pd.DataFrame([payload])
+    required = {"date", "store_nbr", "family", "onpromotion"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Prediction payload missing required fields: {sorted(missing)}")
+
+    df = add_time_features(df)
+    df = add_lag_feature(df, fallback_lag_7=float(payload.get("lag_7", 0.0)))
+    df = normalize_feature_types(df)
+    validate_feature_frame(df)
+    return df

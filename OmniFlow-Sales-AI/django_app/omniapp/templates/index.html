@@ -183,7 +183,7 @@
     <div class="card">
       <div class="card-icon">📤</div>
       <h2>Train Model</h2>
-      <p>Upload any CSV dataset, select your target column, and train a RandomForest model. Metrics are logged to MLflow automatically.</p>
+      <p>Upload a Store Sales CSV, select your target column, and train an XGBoost model with unified preprocessing and validation checks.</p>
       <a href="{% url 'upload' %}" class="btn btn-primary" style="font-size:0.85rem;padding:0.5rem 1.2rem;">Start Training →</a>
     </div>
     <div class="card">
@@ -227,6 +227,6 @@
   </div>
 </div>
 
-<footer>OmniFlow Sales AI &copy; 2024 — Built with FastAPI, scikit-learn, Django &amp; MLflow</footer>
+<footer>OmniFlow Sales AI &copy; 2024 — Built with FastAPI, XGBoost, scikit-learn, Django</footer>
 </body>
 </html>

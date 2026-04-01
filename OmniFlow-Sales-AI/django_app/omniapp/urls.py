@@ -6,6 +6,7 @@ from . import views
 urlpatterns = [
     path("", views.index, name="index"),
     path("upload/", views.upload, name="upload"),
+    path("upload/status/<str:job_id>/", views.upload_status, name="upload_status"),
     path("predict/", views.predict, name="predict"),
     path("train/", views.train_result, name="train_result"),
     path("drift/", views.drift_result, name="drift_result"),

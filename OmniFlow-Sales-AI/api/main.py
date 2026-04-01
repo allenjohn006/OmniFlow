@@ -1,7 +1,10 @@
-"""Main FastAPI application for OmniFlow Sales AI MLOps Backend."""
+"""Main FastAPI application for OmniFlow Sales AI backend."""
 
 import logging
 import sys
+import threading
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 # Ensure project root is on path so `src` is importable
@@ -10,25 +13,78 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
-import json
 
-from src.ingestion import load_raw_data
-from src.preprocessing import preprocess_data, split_data, REFERENCE_STATS_PATH, FEATURE_COLS_PATH
-from src.training import train_model, load_champion_model, get_champion_metrics
+import pandas as pd
+
+from src.preprocessing import TARGET_DEFAULT, build_training_frame
+from src.inference import predict_from_payload
+from src.training import MODEL_PATH, REFERENCE_STATS_PATH, get_champion_metrics, train_model
 from src.drift import detect_drift
 from src.retrain import retrain_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
+TRAINING_JOBS: Dict[str, Dict[str, Any]] = {}
+TRAINING_JOBS_LOCK = threading.Lock()
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _update_job(job_id: str, **updates) -> None:
+    with TRAINING_JOBS_LOCK:
+        if job_id in TRAINING_JOBS:
+            TRAINING_JOBS[job_id].update(updates)
+
+
+def _run_training_job(job_id: str, train_source: Optional[bytes], target_col: str) -> None:
+    def progress_callback(progress: int, stage: str, message: str) -> None:
+        _update_job(job_id, progress=progress, stage=stage, message=message, updated_at=_now_iso())
+
+    try:
+        _update_job(job_id, status="running", started_at=_now_iso())
+        metrics = train_model(
+            train_source=train_source,
+            target_col=target_col,
+            progress_callback=progress_callback,
+        )
+        result = {
+            "status": "success",
+            "message": "Champion model trained and saved successfully.",
+            "target_column": target_col,
+            "metrics": metrics,
+        }
+        _update_job(
+            job_id,
+            status="completed",
+            progress=100,
+            stage="done",
+            message="Training completed successfully.",
+            result=result,
+            completed_at=_now_iso(),
+            updated_at=_now_iso(),
+        )
+    except Exception as e:
+        logger.exception("Async training failed for job %s", job_id)
+        _update_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            message=str(e),
+            error=f"Training error: {str(e)}",
+            completed_at=_now_iso(),
+            updated_at=_now_iso(),
+        )
+
 # ──────────────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="OmniFlow Sales AI",
-    description="MLOps API: Train, Predict, Drift Detection & Automated Retraining",
-    version="1.0.0",
+    description="Store Sales MLOps API: Training, Prediction, Drift & Retraining",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -45,12 +101,12 @@ app.add_middleware(
 
 @app.get("/", tags=["Health"])
 def root():
-    return {"status": "ok", "message": "OmniFlow Sales AI API is running 🚀"}
+    return {"status": "ok", "message": "OmniFlow Store Sales API is running"}
 
 
 @app.get("/health", tags=["Health"])
 def health():
-    model_ready = (PROJECT_ROOT / "models" / "champion_model.pkl").exists()
+    model_ready = MODEL_PATH.exists()
     stats_ready = REFERENCE_STATS_PATH.exists()
     return {
         "api": "healthy",
@@ -66,44 +122,75 @@ def health():
 
 @app.post("/train", tags=["Training"])
 async def train(
-    file: UploadFile = File(..., description="CSV training data"),
-    target_col: str = Form(..., description="Name of the target column"),
+    file: Optional[UploadFile] = File(default=None, description="Optional train.csv upload"),
+    target_col: str = Form(default=TARGET_DEFAULT, description="Target column name"),
 ):
     """
-    Train a new champion model on uploaded CSV data.
+    Train champion model for Store Sales.
 
-    - Preprocesses data (imputation + encoding)
-    - Trains RandomForestRegressor
-    - Saves model, encoders, feature list, reference stats
-    - Logs experiment to MLflow
+    If `file` is not provided, backend loads `data/raw/train.csv`.
+    Auxiliary sources (`stores.csv`, `oil.csv`, `holidays_events.csv`) are loaded from `data/raw/`.
     """
     try:
-        contents = await file.read()
-        df = load_raw_data(contents)
+        train_source = await file.read() if file else None
+        metrics = train_model(train_source=train_source, target_col=target_col)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-    if target_col not in df.columns:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Target column '{target_col}' not found. Available: {df.columns.tolist()}",
-        )
-
-    try:
-        X, y = preprocess_data(df, target_col=target_col, is_training=True)
-        X_train, X_test, y_train, y_test = split_data(X, y)
-        metrics = train_model(X_train, X_test, y_train, y_test, model_name="champion")
     except Exception as e:
         logger.exception("Training failed")
         raise HTTPException(status_code=500, detail=f"Training error: {str(e)}")
 
     return {
         "status": "success",
-        "message": "Model trained and saved successfully.",
+        "message": "Champion model trained and saved successfully.",
         "target_column": target_col,
-        "dataset_shape": {"rows": int(df.shape[0]), "columns": int(df.shape[1])},
         "metrics": metrics,
     }
+
+
+@app.post("/train/start", tags=["Training"])
+async def start_train(
+    file: Optional[UploadFile] = File(default=None, description="Optional train.csv upload"),
+    target_col: str = Form(default=TARGET_DEFAULT, description="Target column name"),
+):
+    train_source = await file.read() if file else None
+    job_id = str(uuid.uuid4())
+
+    with TRAINING_JOBS_LOCK:
+        TRAINING_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "stage": "queued",
+            "message": "Training request accepted.",
+            "target_column": target_col,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "result": None,
+            "error": None,
+        }
+
+    thread = threading.Thread(
+        target=_run_training_job,
+        args=(job_id, train_source, target_col),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "status": "accepted",
+        "job_id": job_id,
+        "poll_url": f"/train/status/{job_id}",
+    }
+
+
+@app.get("/train/status/{job_id}", tags=["Training"])
+def train_status(job_id: str):
+    with TRAINING_JOBS_LOCK:
+        job = TRAINING_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job not found")
+    return job
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -111,47 +198,58 @@ async def train(
 # ──────────────────────────────────────────────────────────────────────────────
 
 class PredictRequest(BaseModel):
+    date: str
+    store_nbr: int
+    family: str
+    onpromotion: float = 0
+    city: str = "Unknown"
+    state: str = "Unknown"
+    type: str = "Unknown"
+    cluster: int = 0
+    dcoilwtico: float = 0.0
+    holiday_type: str = "None"
+    lag_7: Optional[float] = None
+
+
+class PredictEnvelope(BaseModel):
     features: Dict[str, Any]
 
 
 @app.post("/predict", tags=["Prediction"])
 def predict(request: PredictRequest):
     """
-    Generate a prediction from the champion model.
+    Lightweight prediction endpoint without raw CSV merging.
 
-    Send a JSON body: `{ "features": { "col1": val1, "col2": val2, ... } }`
+    Send either a direct feature object or use `/predict-legacy` envelope style.
     """
     try:
-        model = load_champion_model()
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    # Load expected feature columns
-    if not FEATURE_COLS_PATH.exists():
-        raise HTTPException(status_code=500, detail="Feature column list not found. Retrain the model.")
-
-    with open(FEATURE_COLS_PATH) as f:
-        feature_cols = json.load(f)
-
-    import pandas as pd
-    row = pd.DataFrame([request.features])
-
-    # Preprocess (inference mode — no refitting)
-    try:
-        X, _ = preprocess_data(row, target_col="__no_target__", is_training=False)
+        prediction = predict_from_payload(request.model_dump())
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No champion model found. Train first.")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Preprocessing failed: {str(e)}")
-
-    # Align with training feature columns
-    X = X.reindex(columns=feature_cols, fill_value=0)
-
-    prediction = model.predict(X)[0]
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
     return {
         "status": "success",
-        "prediction": round(float(prediction), 4),
+        "prediction": round(prediction, 4),
         "model": "champion",
     }
+
+
+@app.post("/predict-legacy", tags=["Prediction"])
+def predict_legacy(request: PredictEnvelope):
+    """Backward-compatible wrapper for old frontend payload format."""
+    try:
+        prediction = predict_from_payload(request.features)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No champion model found. Train first.")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+    return {"status": "success", "prediction": round(prediction, 4), "model": "champion"}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -161,7 +259,7 @@ def predict(request: PredictRequest):
 @app.post("/drift-retrain", tags=["Drift & Retraining"])
 async def drift_retrain(
     file: UploadFile = File(..., description="New CSV data to check for drift"),
-    target_col: str = Form(..., description="Target column name"),
+    target_col: str = Form(default=TARGET_DEFAULT, description="Target column name"),
 ):
     """
     Upload new production data. The system will:
@@ -170,11 +268,7 @@ async def drift_retrain(
     3. If drift is detected → train challenger model.
     4. Compare challenger vs champion → promote if better.
     """
-    try:
-        contents = await file.read()
-        new_df = load_raw_data(contents)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    contents = await file.read()
 
     if not REFERENCE_STATS_PATH.exists():
         raise HTTPException(
@@ -182,11 +276,12 @@ async def drift_retrain(
             detail="No reference stats found. Train an initial model first.",
         )
 
-    # ── Step 1: Preprocess new data for drift detection ──────────────────────
-    # Apply the same transformations (encoding, etc.) that were applied during training
     try:
-        X_new, _ = preprocess_data(new_df, target_col=target_col, is_training=False)
+        merged_new = build_training_frame(train_source=contents, target_col=target_col)
+        X_new = merged_new.drop(columns=[target_col, "date"], errors="ignore")
         logger.info("New data preprocessed successfully for drift detection")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Preprocessing failed")
         raise HTTPException(status_code=500, detail=f"Preprocessing error: {str(e)}")
@@ -214,7 +309,7 @@ async def drift_retrain(
     if drift_detected:
         logger.info("Drift detected — initiating retraining pipeline...")
         try:
-            retrain_result = retrain_model(new_df, target_col=target_col)
+            retrain_result = retrain_model(contents, target_col=target_col)
             response["retrain_triggered"] = True
             response["retrain_result"] = retrain_result
         except Exception as e:
