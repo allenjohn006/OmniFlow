@@ -122,7 +122,7 @@ def build_training_frame(data_source, target_col: str = "sales") -> pd.DataFrame
         ValueError: If required columns missing from input
     
     Example:
-        >>> df = build_training_frame("data/raw/combined.csv")
+        >>> df = build_training_frame("data/raw/train.csv")
         >>> X, y = df.drop('sales', axis=1), df['sales']
     """
 ```

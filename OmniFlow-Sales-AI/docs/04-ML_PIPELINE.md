@@ -17,7 +17,7 @@ The ML pipeline is a production-grade preprocessing and training system built on
 from src.ingestion import load_data
 
 # Load from CSV
-df = load_data("data/raw/combined.csv")
+df = load_data("data/raw/train.csv")
 
 # Load from bytes (uploaded file)
 df = load_data(file_bytes)

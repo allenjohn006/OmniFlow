@@ -67,7 +67,7 @@ POST /train/start
 **Request**:
 ```bash
 curl -X POST \
-  -F "file=@data/raw/combined.csv" \
+  -F "file=@data/raw/train.csv" \
   -F "target_col=sales" \
   http://localhost:8000/train/start
 ```
@@ -462,7 +462,7 @@ BASE_URL = "http://localhost:8000"
 # 1. Start training
 response = requests.post(
     f"{BASE_URL}/train/start",
-    files={"file": open("data/raw/combined.csv", "rb")},
+    files={"file": open("data/raw/train.csv", "rb")},
     data={"target_col": "sales"}
 )
 job_id = response.json()["job_id"]

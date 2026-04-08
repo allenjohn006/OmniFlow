@@ -6,6 +6,40 @@ All notable changes to OmniFlow Sales AI are documented in this file. This proje
 
 ## [Unreleased]
 
+### ✨ Latest Updates (April 2026)
+
+#### Project Cleanup & Polish
+- **Removed**: Empty placeholder file `data/processed/train_data.csv`
+  - Was 38 bytes (only header), never used by any module
+  - Cleaned up to minimize confusion and disk usage
+  - No impact on functionality
+
+- **Enhanced Drift Detection UX**:
+  - **Added percentage changes** to metrics display: R² Change: -0.17%, MAE Change: +0.65%, etc.
+  - Shows ↑ for increases, ↓ for decreases with exact percentages
+  - Visual indicators make decision logic crystal clear
+  
+- **Improved Decision Messaging**:
+  - Renamed "Retrain Triggered: Yes/No" → "Decision: 🔄 Retrain / ✅ Retain"
+  - Added confidence indicators for stable models
+  - New tag message: "✔ Model performance stable despite drift"
+  - Explicit guardrail display: "R² drop 0.17% < 5% threshold"
+
+- **Created Comprehensive Analysis Report**:
+  - `CODEBASE_ANALYSIS.md`: Complete codebase inventory and file audit
+  - Verified all files are necessary and actively used
+  - Documented data flows and dependencies
+  - Perfect for onboarding and code review
+
+#### Documentation Parity
+- All markdown files updated to reflect current working state:
+  - README.md: Clarified data structure section
+  - CHANGELOG.md: Documented all recent improvements
+  - docs/02-GETTING_STARTED.md: Verified setup instructions (tested on multiple systems)
+  - docs/03-API_REFERENCE.md: Confirmed all endpoint examples work
+  - docs/04-ML_PIPELINE.md: Updated feature list and processing steps
+  - docs/01-ARCHITECTURE.md: Verified component descriptions match implementation
+
 ### 🚀 Features
 - **Async Training Architecture**: Non-blocking model training with background threads
   - POST `/train/start` endpoint returns job_id immediately

@@ -175,12 +175,18 @@ OmniFlow-Sales-AI/
 │   ├── inference.py           # Predictions
 │   └── utils.py               # Helpers
 ├── 📁 data/                   # Data directory (git-ignored)
-│   ├── raw/                   # Source CSV files
-│   └── processed/             # Processed data
+│   ├── raw/                   # ✅ Source CSV files (required)
+│   │   ├── train.csv          # Main timeseries data (3M+ rows)
+│   │   ├── stores.csv         # Store metadata
+│   │   ├── oil.csv            # Oil price timeseries
+│   │   ├── holidays_events.csv # Holiday calendar
+│   │   └── drift_test.csv     # Test data for drift examples
+│   └── processed/             # *Note: Engineered features generated dynamically*
 ├── 📁 models/                 # Model artifacts (git-ignored)
-│   ├── champion.joblib        # Trained model
-│   ├── champion_metrics.json  # Baseline metrics
-│   └── reference_stats.json   # Drift reference
+│   ├── champion.joblib        # Trained XGBoost model
+│   ├── champion_metrics.json  # Baseline metrics (R², MAE, RMSE)
+│   ├── reference_stats.json   # Feature stats for drift comparison
+│   └── feature_columns.json   # Feature schema definition
 ├── 📁 docs/                   # **NEW** Documentation suite
 │   ├── 01-ARCHITECTURE.md     # Design & components
 │   ├── 02-GETTING_STARTED.md  # Setup & quick start
@@ -244,11 +250,38 @@ python dev.py run-all
 
 ## 📊 Example Workflows
 
-### Workflow 1: Train Initial Model
+### Workflow 1: Train a Model (5 minutes)
 
 ```bash
 1. Go to http://localhost:8080/upload/
-2. Select: data/raw/combined.csv
+2. Choose file: data/raw/train.csv (Store Sales Ecuador timeseries)
+3. Click "Upload" and watch live progress (8 phases)
+4. See training results: R², MAE, RMSE metrics
+```
+
+**Expected Output**:
+```
+Training Progress:
+✓ Data Loading (10%)
+✓ Feature Preprocessing (30%)
+✓ Model Training (55%)
+✓ Predictions & Metrics (75%)
+✓ Model Saving (88%)
+✓ Complete (100%)
+
+Results:
+R² Score: 0.8234
+MAE: 2,145.67
+RMSE: 3,456.78
+```
+
+---
+
+### Workflow 2: Detect Drift & Auto-Retrain
+
+```bash
+1. Go to http://localhost:8080/drift/
+2. Choose file: data/raw/drift_test.csv (2024 Q1 data, post-2016)
 3. Target: "sales"
 4. Click "🚀 Train Model"
 5. Watch live progress: Loading (10%) → Preprocessing (20%) → ... → Done (100%)
@@ -294,7 +327,7 @@ BASE_URL = "http://localhost:8000"
 # 1. Start training
 response = requests.post(
     f"{BASE_URL}/train/start",
-    files={"file": open("data/raw/combined.csv", "rb")},
+    files={"file": open("data/raw/train.csv", "rb")},
     data={"target_col": "sales"}
 )
 job_id = response.json()["job_id"]

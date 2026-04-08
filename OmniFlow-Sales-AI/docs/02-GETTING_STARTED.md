@@ -51,19 +51,19 @@ pip install -r requirements.txt
 
 ### 4. Prepare Data
 
-Your training data should be in `data/raw/combined.csv` with structure:
+Your training data should be in `data/raw/train.csv` with structure:
 ```
-date,store_nbr,family,sales,onpromotion,cluster,dcoilwtico,...
+id,date,store_nbr,family,sales,onpromotion,cluster,dcoilwtico,...
 ```
 
-**Auxiliary files** (if using merged dataset):
-- `data/raw/stores.csv` - Store metadata
+**Required auxiliary files** (automatically merged during preprocessing):
+- `data/raw/stores.csv` - Store metadata (city, state, type, cluster)
 - `data/raw/holidays_events.csv` - Holiday calendar
-- `data/raw/oil.csv` - Oil prices
+- `data/raw/oil.csv` - Oil prices for market context
 
-If using sample data:
+**Generate test data for drift detection**:
 ```bash
-python create_drift_test_data.py  # Generates drift_test.csv for testing
+python create_drift_test_data.py  # Generates data/raw/drift_test.csv with 1M+ rows
 ```
 
 ### 5. Initialize Django Database
@@ -196,17 +196,19 @@ OmniFlow-Sales-AI/
 │   └── utils.py                  # Helper utilities
 │
 ├── data/                         # Data directory (git-ignored)
-│   ├── raw/                      # Raw datasets
-│   │   ├── combined.csv          # Training data
-│   │   ├── stores.csv            # Store metadata
-│   │   ├── holidays_events.csv   # Holidays
-│   │   └── oil.csv               # Oil prices
-│   └── processed/                # Processed data
+│   ├── raw/                      # ✅ Required raw datasets
+│   │   ├── train.csv             # Main timeseries (3M+ rows)
+│   │   ├── stores.csv            # Store metadata (city, state, cluster)
+│   │   ├── holidays_events.csv   # Holiday calendar
+│   │   ├── oil.csv               # Oil prices (market context)
+│   │   └── drift_test.csv        # Test data for drift detection
+│   └── processed/                # *Engineered features generated dynamically*
 │
 ├── models/                       # Model artifacts (git-ignored)
-│   ├── champion.joblib           # Trained model
-│   ├── champion_metrics.json     # Baseline metrics
-│   └── reference_stats.json      # Drift baseline
+│   ├── champion.joblib           # Trained XGBoost model
+│   ├── champion_metrics.json     # Baseline metrics (R², MAE, RMSE)
+│   ├── reference_stats.json      # Feature statistics for drift
+│   └── feature_columns.json      # Feature schema definition
 │
 ├── docs/                         # Documentation
 │   ├── 01-ARCHITECTURE.md        # System design
@@ -251,7 +253,7 @@ python dev.py run-all
 
 ### Data File Not Found
 
-**Error**: `FileNotFoundError: data/raw/combined.csv`
+**Error**: `FileNotFoundError: data/raw/train.csv`
 
 **Solution**:
 ```bash
