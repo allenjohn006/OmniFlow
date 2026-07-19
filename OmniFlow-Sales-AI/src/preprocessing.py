@@ -13,12 +13,22 @@ from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
+# Primary data directory: the user's uploaded datasets live here
+DATA_DIR = PROJECT_ROOT.parent / "data"
+# Fallback to data/raw inside project if DATA_DIR doesn't exist
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
-TRAIN_FILE = RAW_DIR / "train.csv"
-STORES_FILE = RAW_DIR / "stores.csv"
-OIL_FILE = RAW_DIR / "oil.csv"
-HOLIDAYS_FILE = RAW_DIR / "holidays_events.csv"
+def _resolve_data_file(filename: str) -> Path:
+    """Resolve a data file path, preferring the workspace-level data/ dir."""
+    candidate = DATA_DIR / filename
+    if candidate.exists():
+        return candidate
+    return RAW_DIR / filename
+
+TRAIN_FILE = _resolve_data_file("train.csv")
+STORES_FILE = _resolve_data_file("stores.csv")
+OIL_FILE = _resolve_data_file("oil.csv")
+HOLIDAYS_FILE = _resolve_data_file("holidays_events.csv")
 
 TARGET_DEFAULT = "sales"
 
@@ -61,22 +71,54 @@ def _build_holiday_lookup(holidays_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def merge_store_sales_sources(train_df: pd.DataFrame) -> pd.DataFrame:
-    """Merge train rows with store/oil/holiday side tables using local raw data files."""
-    stores_df = pd.read_csv(STORES_FILE)
-    oil_df = pd.read_csv(OIL_FILE)
-    holidays_df = pd.read_csv(HOLIDAYS_FILE)
+    """Merge train rows with store/oil/holiday side tables.
 
+    Auxiliary files (stores, oil, holidays) are loaded from the resolved data
+    directory. If any auxiliary file is missing, sensible defaults are filled in
+    so the pipeline can still train without all side-tables.
+    """
     df = train_df.copy()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    stores_df["store_nbr"] = pd.to_numeric(stores_df["store_nbr"], errors="coerce")
-    oil_df["date"] = pd.to_datetime(oil_df["date"], errors="coerce")
+    # --- stores.csv (city, state, type, cluster) ---
+    stores_file = _resolve_data_file("stores.csv")
+    if stores_file.exists():
+        stores_df = pd.read_csv(stores_file)
+        stores_df["store_nbr"] = pd.to_numeric(stores_df["store_nbr"], errors="coerce")
+        df = df.merge(stores_df, on="store_nbr", how="left")
+        logger.info("Merged stores.csv (%d rows)", len(stores_df))
+    else:
+        logger.warning("stores.csv not found at %s — using defaults", stores_file)
+        for col in ["city", "state", "type"]:
+            if col not in df.columns:
+                df[col] = "Unknown"
+        if "cluster" not in df.columns:
+            df["cluster"] = 0
 
-    holiday_lookup = _build_holiday_lookup(holidays_df)
+    # --- oil.csv (dcoilwtico) ---
+    oil_file = _resolve_data_file("oil.csv")
+    if oil_file.exists():
+        oil_df = pd.read_csv(oil_file)
+        oil_df["date"] = pd.to_datetime(oil_df["date"], errors="coerce")
+        df = df.merge(oil_df[["date", "dcoilwtico"]], on="date", how="left")
+        logger.info("Merged oil.csv (%d rows)", len(oil_df))
+    else:
+        logger.warning("oil.csv not found at %s — setting dcoilwtico=0.0", oil_file)
+        if "dcoilwtico" not in df.columns:
+            df["dcoilwtico"] = 0.0
 
-    df = df.merge(stores_df, on="store_nbr", how="left")
-    df = df.merge(oil_df[["date", "dcoilwtico"]], on="date", how="left")
-    df = df.merge(holiday_lookup, on="date", how="left")
+    # --- holidays_events.csv (holiday_type) ---
+    holidays_file = _resolve_data_file("holidays_events.csv")
+    if holidays_file.exists():
+        holidays_df = pd.read_csv(holidays_file)
+        holiday_lookup = _build_holiday_lookup(holidays_df)
+        df = df.merge(holiday_lookup, on="date", how="left")
+        logger.info("Merged holidays_events.csv (%d rows)", len(holidays_df))
+    else:
+        logger.warning("holidays_events.csv not found at %s — setting holiday_type=None", holidays_file)
+        if "holiday_type" not in df.columns:
+            df["holiday_type"] = "None"
+
     df["holiday_type"] = df["holiday_type"].fillna("None")
     return df
 
@@ -92,15 +134,21 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def add_lag_feature(df: pd.DataFrame, fallback_lag_7: Optional[float] = None) -> pd.DataFrame:
+def add_lag_feature(
+    df: pd.DataFrame,
+    fallback_lag_7: Optional[float] = None,
+    target_col: str = "sales",
+) -> pd.DataFrame:
     out = df.copy()
     if "lag_7" in out.columns:
         out["lag_7"] = pd.to_numeric(out["lag_7"], errors="coerce")
         return out
 
-    if "sales" in out.columns:
+    # Use the actual target column to build lag features
+    lag_source = target_col if target_col in out.columns else "sales"
+    if lag_source in out.columns:
         out = out.sort_values(["store_nbr", "family", "date"])
-        out["lag_7"] = out.groupby(["store_nbr", "family"])["sales"].shift(7)
+        out["lag_7"] = out.groupby(["store_nbr", "family"])[lag_source].shift(7)
     else:
         out["lag_7"] = fallback_lag_7 if fallback_lag_7 is not None else 0.0
 
@@ -149,23 +197,33 @@ def build_training_frame(train_source=None, target_col: str = TARGET_DEFAULT) ->
     """
     Build merged and feature-engineered training frame.
 
-    `train_source` can be None (use data/raw/train.csv), file path, or uploaded bytes.
+    `train_source` can be None (loads from workspace data/ directory),
+    a file path, or uploaded bytes from the web UI.
+    Auxiliary files (stores.csv, oil.csv, holidays_events.csv) are
+    auto-resolved; missing files are handled with sensible defaults.
     """
     if train_source is None:
-        train_df = pd.read_csv(TRAIN_FILE)
+        train_file = _resolve_data_file("train.csv")
+        train_df = pd.read_csv(train_file)
+        logger.info("Loaded training data from %s (%d rows)", train_file, len(train_df))
     else:
         train_df = _read_csv_from_source(train_source)
+        logger.info("Loaded training data from upload (%d rows)", len(train_df))
 
     required = {"date", "store_nbr", "family", "onpromotion"}
     missing = required - set(train_df.columns)
     if missing:
         raise ValueError(f"Training data missing required columns: {sorted(missing)}")
     if target_col not in train_df.columns:
-        raise ValueError(f"Target column '{target_col}' not found in training data")
+        available = sorted(train_df.columns.tolist())
+        raise ValueError(
+            f"Target column '{target_col}' not found in training data. "
+            f"Available columns: {available}"
+        )
 
     df = merge_store_sales_sources(train_df)
     df = add_time_features(df)
-    df = add_lag_feature(df)
+    df = add_lag_feature(df, target_col=target_col)
     df = normalize_feature_types(df)
     df = df.dropna(subset=[target_col, "date"])
     validate_feature_frame(df)

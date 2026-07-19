@@ -27,8 +27,8 @@ mlruns/
 mlflow.db
 *.joblib
 *.pkl
-models/*.joblib
-models/*.json
+OmniFlow-Sales-AI/models/*.joblib
+OmniFlow-Sales-AI/models/preprocessors.pkl
 
 # Django
 *.db
@@ -38,21 +38,9 @@ django_db/
 # OS
 .DS_Store
 Thumbs.db
-.DS_Store?
 ._*
-.Spotlight-V100
-.Trashes
 
 # Temporary files
 *.tmp
 *.temp
 *.log
-
-# Test coverage
-.coverage
-htmlcov/
-.pytest_cache/
-
-# IDE generated
-*.sublime-project
-*.sublime-workspace

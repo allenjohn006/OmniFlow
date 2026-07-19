@@ -205,46 +205,72 @@ OmniFlow-Sales-AI/
 
 ## 🚀 Quick Start
 
-### 1. Installation (5 minutes)
+### 1. Installation & Data Setup
 
+1. **Clone repository**:
+   ```bash
+   git clone https://github.com/your-org/OmniFlow-Sales-AI.git
+   cd OmniFlow-Sales-AI
+   ```
+
+2. **Create & activate virtual environment**:
+   ```bash
+   # On Windows (PowerShell):
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+
+   # On macOS/Linux:
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Prepare Dataset**:
+   Place the Kaggle Store Sales dataset files (`train.csv`, `stores.csv`, `oil.csv`, `holidays_events.csv`) in a directory named `data/` at the **parent** level of the project repository (i.e., `../data/`), or in the project fallback directory `data/raw/`.
+
+---
+
+### 2. Start Servers
+
+You can launch both servers simultaneously using the development utility, or start them separately in different terminal windows.
+
+#### Option A: Run both servers together (Recommended)
 ```bash
-# Clone repository
-git clone https://github.com/your-org/OmniFlow-Sales-AI.git
-cd OmniFlow-Sales-AI
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate    # macOS/Linux
-# or
-.venv\Scripts\Activate.ps1   # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 2. Start Servers (2 commands)
-
-```bash
-# Terminal 1: Launch both FastAPI + Django
 python dev.py run-all
-
-# Wait for output:
-# ✅ Both servers started successfully!
-# 🌐 Access the application:
-#    • Web Dashboard:  http://localhost:8080
-#    • API Docs:       http://localhost:8000/docs
 ```
+This utility automatically runs FastAPI on port `8000` and Django on port `8080`.
+
+#### Option B: Run servers individually
+* **FastAPI Backend (Terminal 1)**:
+  ```bash
+  python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+  ```
+* **Django Frontend (Terminal 2)**:
+  ```bash
+  cd django_app
+  python manage.py runserver 0.0.0.0:8080
+  ```
+
+Once started, access the interfaces:
+- 🌐 **Web Dashboard**: [http://localhost:8080](http://localhost:8080)
+- 📖 **API Docs (Swagger UI)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+---
 
 ### 3. Use the System
 
-**Train**: http://localhost:8080/upload/
-- Upload CSV → See 8-phase live progress → View metrics (R², MAE, RMSE)
+**Train**: [http://localhost:8080/upload/](http://localhost:8080/upload/)
+- Upload `train.csv` (target column: `sales`) → See 8-phase live progress → View metrics (R², MAE, RMSE)
 
-**Drift**: http://localhost:8080/drift/
-- Upload new data → Auto-detect drift → See auto-retrain decision (with reason)
+**Drift**: [http://localhost:8080/drift/](http://localhost:8080/drift/)
+- Upload `drift_test.csv` (target column: `sales`) → Auto-detect drift → See auto-retrain decision (with reason)
 
-**Predict**: http://localhost:8080/predict/
-- Enter features → Get sales prediction
+**Predict**: [http://localhost:8080/predict/](http://localhost:8080/predict/)
+- Enter features → Get real-time sales prediction
 
 ---
 
@@ -460,10 +486,11 @@ On 100%, browser auto-redirects to results
 **Model Accuracy**:
 | Metric | Value |
 |---|---|
-| R² Score | 0.8805 |
-| MAE | $103.52 |
-| RMSE | $145.23 |
-| Test samples | 500K+ |
+| R² Score | 0.8820 |
+| MAE | 102.85 |
+| RMSE | 452.52 |
+| Train samples | 1,945,944 |
+| Test samples | 1,054,944 |
 
 ---
 
@@ -517,12 +544,7 @@ We welcome contributions! See [CONTRIBUTING.md](docs/05-CONTRIBUTING.md) for:
 
 ---
 
-## 📞 Support
 
-- **Questions**: Open a GitHub Discussion
-- **Bugs**: Report via GitHub Issues (with template)
-- **Security**: Email security@example.com
-- **Docs**: Full suite in `/docs` directory
 
 ---
 
@@ -637,11 +659,13 @@ drift_ratio = n_drifted_features / total_features
 **Current Best Model** (as of last training):
 - **Algorithm**: XGBoost
 - **Hyperparameters**: 300 trees, max_depth=8, learning_rate=0.05
-- **Training Data**: Kaggle Store Sales (2013-2015, temporal split)
+- **Training Data**: Kaggle Store Sales (temporal split: train < 2016-01-01, test >= 2016-01-01)
 - **Metrics**:
-  - R² Score: **0.882** (88.2% variance explained)
-  - MAE: **102.85** (mean absolute error)
-  - RMSE: **452.52** (root mean squared error)
+  - R² Score: **0.8820** (88.2% variance explained)
+  - MAE: **102.8503** (mean absolute error)
+  - RMSE: **452.5207** (root mean squared error)
+  - Train Rows: **1,945,944**
+  - Test Rows: **1,054,944**
 
 ---
 
@@ -672,34 +696,7 @@ python -m pytest tests/test_drift_detection.py
 
 ## 📋 Project Structure
 
-```
-OmniFlow-Sales-AI/
-├── api/                          # FastAPI backend
-│   ├── main.py                  # Core endpoints
-│   └── routes/                  # Modular route definitions
-├── src/                          # ML pipeline modules
-│   ├── training.py              # Model training + progress
-│   ├── preprocessing.py         # Feature engineering
-│   ├── drift.py                 # Drift detection
-│   └── utils.py                 # Helpers
-├── django_app/                   # Django frontend
-│   ├── omniapp/
-│   │   ├── views.py             # Request handlers
-│   │   ├── urls.py              # URL routing
-│   │   └── templates/           # HTML templates
-│   └── manage.py                # Django CLI
-├── data/
-│   ├── raw/                     # Original CSVs
-│   ├── processed/               # Cleaned/cached data
-│   └── reference_stats.json     # Baseline distributions
-├── models/
-│   ├── champion.joblib          # Production model
-│   └── champion_metrics.json    # Last training metrics
-├── tests/                        # Unit & integration tests
-├── dev.py                        # Local dev server launcher
-├── requirements.txt             # Python dependencies
-└── README.md                    # This file
-```
+For a full breakdown of the directory layout and file roles, please refer to the [Directory Structure](#directory-structure) section at the top of this document.
 
 ---
 
@@ -813,11 +810,6 @@ Response (completed):
 
 ---
 
-## 📝 License
-
-MIT License - See LICENSE file for details
-
----
 
 ## 👥 Authors
 
@@ -827,15 +819,8 @@ MIT License - See LICENSE file for details
 
 ---
 
-## 📞 Support
-
-For issues, questions, or feature requests:
-1. Check [Troubleshooting](#-troubleshooting) section
-2. Review [CHANGELOG.md](CHANGELOG.md) for recent changes
-3. Open an issue on GitHub with detailed reproduction steps
-
 ---
 
-**Last Updated**: April 1, 2026  
+**Last Updated**: July 19, 2026  
 **Current Branch**: TimeSeries  
 **Status**: ✅ Production Ready
